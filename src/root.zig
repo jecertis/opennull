@@ -5,6 +5,7 @@ const std = @import("std");
 pub const security = @import("security/sandbox.zig");
 pub const config = struct {
     pub const dotenv = @import("config/dotenv.zig");
+    pub const toml = @import("config/toml.zig");
 };
 
 pub const version = "0.1.0";
