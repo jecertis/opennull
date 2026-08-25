@@ -32,6 +32,14 @@ pub const Tool = union(ToolTag) {
     file_write: file_write.FileWriteTool,
     file_edit: file_edit.FileEditTool,
 
+    /// The dispatch/LLM-facing name, derived directly from the active tag
+    /// so it can never drift from what registry.find() matches against.
+    /// Every concrete tool's spec().name must equal this (see
+    /// test/registry_test.zig).
+    pub fn name(self: Tool) []const u8 {
+        return @tagName(self);
+    }
+
     pub fn spec(self: Tool, allocator: std.mem.Allocator) !ToolSpec {
         return switch (self) {
             inline else => |t| t.spec(allocator),
