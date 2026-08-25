@@ -13,6 +13,9 @@ pub const provider = struct {
     pub const anthropic = @import("provider/anthropic.zig");
     pub const http = @import("provider/http.zig");
 };
+pub const cli = struct {
+    pub const run = @import("cli/run.zig");
+};
 
 pub const version = "0.1.0";
 
