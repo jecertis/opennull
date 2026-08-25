@@ -21,6 +21,9 @@ pub const tools = struct {
     pub const tool = @import("tools/tool.zig");
     pub const registry = @import("tools/registry.zig");
 };
+pub const agent = struct {
+    pub const loop = @import("agent/loop.zig");
+};
 
 pub const version = "0.1.0";
 

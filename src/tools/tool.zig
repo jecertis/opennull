@@ -5,6 +5,7 @@
 //! `execute(allocator, io, policy, args) -> ToolResult`.
 const std = @import("std");
 const sandbox = @import("../security/sandbox.zig");
+const provider = @import("../provider/provider.zig");
 const file_read = @import("file_read.zig");
 const file_write = @import("file_write.zig");
 const file_edit = @import("file_edit.zig");
@@ -15,11 +16,11 @@ pub const ToolResult = struct {
     err: ?[]const u8 = null,
 };
 
-pub const ToolSpec = struct {
-    name: []const u8,
-    description: []const u8,
-    parameters_schema: std.json.Value,
-};
+/// Reuses provider.ToolSpec (rather than declaring an identical-looking
+/// duplicate) so a []ToolSpec built here can be passed directly as a
+/// ChatRequest.tools value — two structurally-identical but nominally
+/// distinct Zig types would NOT be interchangeable there.
+pub const ToolSpec = provider.ToolSpec;
 
 pub const ToolTag = enum {
     file_read,

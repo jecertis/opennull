@@ -61,6 +61,7 @@ pub fn build(b: *std.Build) void {
         "test/file_edit_test.zig",
         "test/registry_test.zig",
         "test/openai_compat_test.zig",
+        "test/loop_test.zig",
     };
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_mod_tests.step);
