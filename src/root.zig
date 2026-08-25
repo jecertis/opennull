@@ -16,6 +16,9 @@ pub const provider = struct {
 pub const cli = struct {
     pub const run = @import("cli/run.zig");
 };
+pub const tools = struct {
+    pub const tool = @import("tools/tool.zig");
+};
 
 pub const version = "0.1.0";
 

@@ -28,6 +28,14 @@ pub const SecurityPolicy = struct {
 
         return false;
     }
+
+    /// Resolves `requested_path` to an absolute path against this policy's
+    /// workspace root, for a tool to actually open once it has already
+    /// confirmed `isAllowed`. Does NOT itself check whether the path is
+    /// allowed — callers must check that first.
+    pub fn resolvePath(self: SecurityPolicy, allocator: std.mem.Allocator, requested_path: []const u8) ![]u8 {
+        return resolveAgainst(allocator, self.workspace_root, requested_path);
+    }
 };
 
 /// Lexically resolve `path` to an absolute path: if already absolute it is

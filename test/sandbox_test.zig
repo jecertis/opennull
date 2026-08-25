@@ -80,6 +80,26 @@ test "absolute path outside workspace but in allow list is allowed" {
 // Scenario: Given an absolute path outside the workspace and NOT covered by
 // any allow-list entry, when checking isAllowed, then it is rejected even
 // though other allow entries exist.
+// Scenario: Given a relative path, when resolved (not just allow-checked),
+// then the returned path is the absolute, lexically-normalized form joined
+// onto the workspace root — so a tool that already called isAllowed can
+// actually open the file without re-implementing path joining.
+test "resolvePath returns the absolute form of a relative path" {
+    const policy = SecurityPolicy{ .workspace_root = "/workspace" };
+    const resolved = try policy.resolvePath(std.testing.allocator, "src/main.zig");
+    defer std.testing.allocator.free(resolved);
+    try std.testing.expectEqualStrings("/workspace/src/main.zig", resolved);
+}
+
+// Scenario: Given an already-absolute path, when resolved, then it is
+// returned normalized (".." collapsed) rather than joined onto the root.
+test "resolvePath normalizes an already-absolute path" {
+    const policy = SecurityPolicy{ .workspace_root = "/workspace" };
+    const resolved = try policy.resolvePath(std.testing.allocator, "/workspace/./src/../src/main.zig");
+    defer std.testing.allocator.free(resolved);
+    try std.testing.expectEqualStrings("/workspace/src/main.zig", resolved);
+}
+
 test "absolute path outside workspace and outside all allow entries is rejected" {
     const policy = SecurityPolicy{
         .workspace_root = "/workspace",
