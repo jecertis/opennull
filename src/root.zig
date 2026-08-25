@@ -8,6 +8,10 @@ pub const config = struct {
     pub const toml = @import("config/toml.zig");
     pub const config = @import("config/config.zig");
 };
+pub const provider = struct {
+    pub const core = @import("provider/provider.zig");
+    pub const anthropic = @import("provider/anthropic.zig");
+};
 
 pub const version = "0.1.0";
 

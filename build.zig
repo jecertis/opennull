@@ -53,6 +53,7 @@ pub fn build(b: *std.Build) void {
         "test/dotenv_test.zig",
         "test/toml_test.zig",
         "test/config_test.zig",
+        "test/anthropic_test.zig",
     };
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_mod_tests.step);
