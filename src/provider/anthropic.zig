@@ -4,6 +4,9 @@
 //! responses, since we don't control that shape. See test/anthropic_test.zig.
 const std = @import("std");
 const provider = @import("provider.zig");
+const json_util = @import("json_util.zig");
+const appendJsonString = json_util.appendJsonString;
+const appendJsonValue = json_util.appendJsonValue;
 
 pub const AnthropicProvider = struct {
     transport: provider.Transport,
@@ -112,61 +115,6 @@ fn appendContentBlock(buf: *std.ArrayListUnmanaged(u8), a: std.mem.Allocator, bl
             try buf.appendSlice(a, ",\"content\":");
             try appendJsonString(buf, a, tr.content);
             if (tr.is_error) try buf.appendSlice(a, ",\"is_error\":true");
-            try buf.append(a, '}');
-        },
-    }
-}
-
-fn appendJsonString(buf: *std.ArrayListUnmanaged(u8), a: std.mem.Allocator, s: []const u8) !void {
-    try buf.append(a, '"');
-    for (s) |c| {
-        switch (c) {
-            '"' => try buf.appendSlice(a, "\\\""),
-            '\\' => try buf.appendSlice(a, "\\\\"),
-            '\n' => try buf.appendSlice(a, "\\n"),
-            '\r' => try buf.appendSlice(a, "\\r"),
-            '\t' => try buf.appendSlice(a, "\\t"),
-            else => try buf.append(a, c),
-        }
-    }
-    try buf.append(a, '"');
-}
-
-fn appendJsonValue(buf: *std.ArrayListUnmanaged(u8), a: std.mem.Allocator, v: std.json.Value) !void {
-    switch (v) {
-        .null => try buf.appendSlice(a, "null"),
-        .bool => |b| try buf.appendSlice(a, if (b) "true" else "false"),
-        .integer => |i| {
-            const s = try std.fmt.allocPrint(a, "{d}", .{i});
-            defer a.free(s);
-            try buf.appendSlice(a, s);
-        },
-        .float => |f| {
-            const s = try std.fmt.allocPrint(a, "{d}", .{f});
-            defer a.free(s);
-            try buf.appendSlice(a, s);
-        },
-        .number_string => |s| try buf.appendSlice(a, s),
-        .string => |s| try appendJsonString(buf, a, s),
-        .array => |arr| {
-            try buf.append(a, '[');
-            for (arr.items, 0..) |item, i| {
-                if (i != 0) try buf.append(a, ',');
-                try appendJsonValue(buf, a, item);
-            }
-            try buf.append(a, ']');
-        },
-        .object => |obj| {
-            try buf.append(a, '{');
-            var it = obj.iterator();
-            var first = true;
-            while (it.next()) |entry| {
-                if (!first) try buf.append(a, ',');
-                first = false;
-                try appendJsonString(buf, a, entry.key_ptr.*);
-                try buf.append(a, ':');
-                try appendJsonValue(buf, a, entry.value_ptr.*);
-            }
             try buf.append(a, '}');
         },
     }
