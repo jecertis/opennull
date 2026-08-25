@@ -11,6 +11,7 @@ pub const config = struct {
 pub const provider = struct {
     pub const core = @import("provider/provider.zig");
     pub const anthropic = @import("provider/anthropic.zig");
+    pub const http = @import("provider/http.zig");
 };
 
 pub const version = "0.1.0";
