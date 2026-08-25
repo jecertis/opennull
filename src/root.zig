@@ -11,6 +11,7 @@ pub const config = struct {
 pub const provider = struct {
     pub const core = @import("provider/provider.zig");
     pub const anthropic = @import("provider/anthropic.zig");
+    pub const openai_compat = @import("provider/openai_compat.zig");
     pub const http = @import("provider/http.zig");
 };
 pub const cli = struct {
