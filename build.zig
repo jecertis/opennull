@@ -50,6 +50,7 @@ pub fn build(b: *std.Build) void {
     // module and is wired as its own test binary here as they're added.
     const test_files = [_][]const u8{
         "test/sandbox_test.zig",
+        "test/dotenv_test.zig",
     };
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_mod_tests.step);
