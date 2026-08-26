@@ -2,6 +2,7 @@ const std = @import("std");
 const opennull = @import("opennull");
 const run = opennull.cli.run;
 const chat = opennull.cli.chat;
+const upgrade = opennull.cli.upgrade;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -12,16 +13,33 @@ pub fn main(init: std.process.Init) !void {
     const w = &stdout_file_writer.interface;
 
     const argv = try init.minimal.args.toSlice(allocator);
+    const self_path = argv[0];
     const args = if (argv.len > 1) argv[1..] else argv[0..0];
+
+    if (args.len > 0) {
+        if (std.mem.eql(u8, args[0], "--version") or std.mem.eql(u8, args[0], "-v")) {
+            try w.print("opennull v{s}\n", .{opennull.version});
+            try w.flush();
+            return;
+        }
+        if (std.mem.eql(u8, args[0], "upgrade")) {
+            try upgrade.execute(allocator, io, args[1..], self_path, w);
+            try w.flush();
+            return;
+        }
+    }
 
     switch (run.parseArgs(args)) {
         .run => |r| try run.execute(allocator, io, init.environ_map, r.prompt, w),
         .chat => try chat.execute(allocator, io, init.environ_map, w),
         .missing_prompt => try w.print("usage: opennull run \"<prompt>\"\n", .{}),
         .unknown => try w.print(
-            "opennull v{s}\nusage: opennull\n" ++
+            "opennull v{s}\n" ++
+                "usage: opennull\n" ++
                 "       opennull run \"<prompt>\"\n" ++
-                "       opennull chat\n",
+                "       opennull chat\n" ++
+                "       opennull upgrade [--check]\n" ++
+                "       opennull --version\n",
             .{opennull.version},
         ),
     }
