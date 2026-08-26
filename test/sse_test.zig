@@ -108,9 +108,11 @@ const RecordingSink = struct {
         const self: *RecordingSink = @ptrCast(@alignCast(ptr));
         switch (ev) {
             .text => |t| self.events.append(self.allocator, .{ .text = self.allocator.dupe(u8, t) catch @panic("OOM") }) catch @panic("OOM"),
+            // The sink contract: slices are only valid during this call —
+            // copy them, the decoder's buffers keep growing.
             .tool_use_started => |t| self.events.append(self.allocator, .{ .tool_use_started = .{
-                .id = t.id,
-                .name = t.name,
+                .id = self.allocator.dupe(u8, t.id) catch @panic("OOM"),
+                .name = self.allocator.dupe(u8, t.name) catch @panic("OOM"),
             } }) catch @panic("OOM"),
         }
     }
@@ -379,4 +381,119 @@ test "chatStreaming sends stream flag, emits deltas, returns complete response" 
     try std.testing.expectEqual(provider.StopReason.end_turn, resp.stop_reason);
     try std.testing.expectEqualStrings("Hey", resp.content[0].text);
     try std.testing.expectEqual(@as(u32, 9), resp.usage.?.input_tokens);
+}
+
+// -- OpenAI-compatible streaming ----------------------------------------
+
+const openai = opennull.provider.openai_compat;
+
+fn feedOpenAi(dec: *openai.StreamDecoder, datas: []const []const u8) !void {
+    for (datas) |d| {
+        var buf: [512]u8 = undefined;
+        _ = try dec.feedLine(try std.fmt.bufPrint(&buf, "data: {s}", .{d}));
+        _ = try dec.feedLine("");
+    }
+    _ = try dec.feedLine("data: [DONE]");
+    _ = try dec.feedLine("");
+}
+
+// Scenario: Given a nameless-SSE OpenAI stream (content deltas, finish
+// reason stop, usage on the final chunk, then [DONE]), when decoded, then
+// live text events fire and the assembled response carries the full text
+// with prompt/completion tokens mapped to neutral usage.
+test "openai text stream decodes deltas, finish reason and usage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var recorder = RecordingSink{ .allocator = a };
+    defer recorder.events.deinit(a);
+    var dec = openai.StreamDecoder.init(a, recorder.sink());
+    defer dec.deinit();
+
+    try feedOpenAi(&dec, &.{
+        "{\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Good \"}}]}",
+        "{\"choices\":[{\"delta\":{\"content\":\"day\"}}]}",
+        "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}",
+        "{\"choices\":[],\"usage\":{\"prompt_tokens\":31,\"completion_tokens\":4}}",
+        "[DONE]",
+    });
+
+    try std.testing.expectEqual(@as(usize, 2), recorder.events.items.len);
+    try std.testing.expectEqualStrings("Good ", recorder.events.items[0].text);
+    try std.testing.expectEqualStrings("day", recorder.events.items[1].text);
+
+    const resp = try dec.buildResponse();
+    try std.testing.expectEqual(provider.StopReason.end_turn, resp.stop_reason);
+    try std.testing.expectEqual(@as(usize, 1), resp.content.len);
+    try std.testing.expectEqualStrings("Good day", resp.content[0].text);
+    const u = resp.usage.?;
+    try std.testing.expectEqual(@as(u32, 31), u.input_tokens);
+    try std.testing.expectEqual(@as(u32, 4), u.output_tokens);
+}
+
+// Scenario: Given streamed tool_calls where the first fragment carries
+// id+name and arguments arrive split across chunks, when decoded, then a
+// live tool_use_started fires and the assembled tool_use block has parsed
+// input with stop_reason tool_calls.
+test "openai tool_calls stream assembles fragments into a dispatchable block" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var recorder = RecordingSink{ .allocator = a };
+    defer recorder.events.deinit(a);
+    var dec = openai.StreamDecoder.init(a, recorder.sink());
+    defer dec.deinit();
+
+    try feedOpenAi(&dec, &.{
+        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_z\",\"function\":{\"name\":\"file_write\",\"arguments\":\"\"}}]}}]}",
+        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"x\\\",\"}}]}}]}",
+        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"content\\\":\\\"hi\\\"}\"}}]}}]}",
+        "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}",
+        "[DONE]",
+    });
+
+    try std.testing.expectEqual(@as(usize, 1), recorder.events.items.len);
+    try std.testing.expectEqualStrings("file_write", recorder.events.items[0].tool_use_started.name);
+
+    const resp = try dec.buildResponse();
+    try std.testing.expectEqual(provider.StopReason.tool_use, resp.stop_reason);
+    const tu = resp.content[0].tool_use;
+    try std.testing.expectEqualStrings("call_z", tu.id);
+    try std.testing.expectEqualStrings("file_write", tu.name);
+    try std.testing.expectEqualStrings("x", tu.input.object.get("path").?.string);
+    try std.testing.expectEqualStrings("hi", tu.input.object.get("content").?.string);
+}
+
+// Scenario: Given chatStreaming on the openai provider over a scripted
+// connection, when it runs, then the request body asks for streaming WITH
+// usage included, and the complete response comes back.
+test "openai chatStreaming requests include_usage and returns whole response" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var t = ScriptedStreamTransport{
+        .allocator = a,
+        .lines = &.{
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}",
+            "",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1}}",
+            "",
+            "data: [DONE]",
+            "",
+        },
+    };
+    const p = openai.OpenAiCompatProvider{ .transport = t.transport(), .base_url = "http://localhost:9", .api_key = "k" };
+
+    var recorder = RecordingSink{ .allocator = a };
+    defer recorder.events.deinit(a);
+
+    const resp = try p.chatStreaming(a, .{ .model = "m", .messages = &.{} }, recorder.sink());
+
+    try std.testing.expect(std.mem.indexOf(u8, t.captured_body, "\"stream\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.captured_body, "\"include_usage\":true") != null);
+    try std.testing.expectEqualStrings("ok", resp.content[0].text);
+    try std.testing.expectEqual(@as(u32, 5), resp.usage.?.input_tokens);
 }
