@@ -152,7 +152,7 @@ pub fn buildDefaultConfig(
     // stable names per endpoint; override via config.toml when needed.
     const candidates = [_]struct { env: ?[]const u8, name: []const u8, kind: []const u8, base_url: []const u8, model: []const u8 }{
         .{ .env = "ANTHROPIC_API_KEY", .name = "anthropic", .kind = "anthropic", .base_url = "https://api.anthropic.com", .model = "claude-sonnet-5" },
-        .{ .env = "GROQ_API_KEY", .name = "groq", .kind = "openai_compat", .base_url = "https://api.groq.com/openai/v1", .model = "llama-3.1-8b-instant" },
+        .{ .env = "GROQ_API_KEY", .name = "groq", .kind = "openai_compat", .base_url = "https://api.groq.com/openai/v1", .model = "qwen/qwen3.8-27b" },
         .{ .env = "GEMINI_API_KEY", .name = "gemini", .kind = "openai_compat", .base_url = "https://generativelanguage.googleapis.com/v1beta/openai", .model = "gemini-2.0-flash" },
         .{ .env = "OPENROUTER_API_KEY", .name = "openrouter", .kind = "openai_compat", .base_url = "https://openrouter.ai/api/v1", .model = "meta-llama/llama-3.3-70b-instruct:free" },
         // Always registered: free, local, no key. Ignored auth header is

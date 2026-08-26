@@ -81,7 +81,7 @@ test "groq key present: default route is groq" {
 
     const sel = try opennull.router.select(&cfg, cfg.default_hint);
     try std.testing.expectEqualStrings("groq", sel.provider);
-    try std.testing.expectEqualStrings("llama-3.1-8b-instant", sel.model);
+    try std.testing.expectEqualStrings("qwen/qwen3.8-27b", sel.model);
 }
 
 // Scenario: Given BOTH an Anthropic key and a Groq key, when built, then
@@ -102,7 +102,7 @@ test "priority: anthropic beats groq; hints expose both" {
 
     const groq = try opennull.router.select(&cfg, "groq");
     try std.testing.expectEqualStrings("groq", groq.provider);
-    try std.testing.expectEqualStrings("llama-3.1-8b-instant", groq.model);
+    try std.testing.expectEqualStrings("qwen/qwen3.8-27b", groq.model);
 }
 
 // Scenario: Given the MissingApiKeyEnv failure (possible only via a written
