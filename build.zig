@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const strip = b.option(bool, "strip", "Omit debug info from binaries") orelse false;
 
     const tui_enabled = b.option(bool, "tui", "Enable the optional terminal UI") orelse false;
     const build_options = b.addOptions();
@@ -15,6 +16,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip,
     });
     opennull_mod.addOptions("build_options", build_options);
 
@@ -24,6 +26,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip,
             .imports = &.{
                 .{ .name = "opennull", .module = opennull_mod },
             },

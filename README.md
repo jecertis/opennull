@@ -7,11 +7,27 @@ provider your config selects.
 Pre-release software built test-first (every module has BDD-style specs in
 `test/`); requires **Zig 0.16.0**.
 
+## Install
+
+**Download a binary** from [Releases](https://github.com/jecertis/opennull/releases/latest) —
+statically-linked Linux and macOS builds for x86_64 and arm64 (~0.5 MB tarballs):
+
+```sh
+curl -LO https://github.com/jecertis/opennull/releases/latest/download/opennull-v0.1.1-x86_64-macos.tar.gz
+tar -xzf opennull-v0.1.1-*.tar.gz && cd opennull-v0.1.1-*
+./opennull
+```
+
+**Or build from source:**
+
 ## Build & test
+
+Requires **Zig 0.16.0**.
 
 ```sh
 zig build            # binary at zig-out/bin/opennull
 zig build test       # full suite: 22 test binaries, offline, no network needed
+zig build -Doptimize=ReleaseSafe -Dstrip=true   # release binary
 ```
 
 ## Quick start
