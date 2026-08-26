@@ -11,7 +11,7 @@ Pre-release software built test-first (every module has BDD-style specs in
 
 ```sh
 zig build            # binary at zig-out/bin/opennull
-zig build test       # full suite: 21 test binaries, offline, no network needed
+zig build test       # full suite: 23 test binaries, offline, no network needed
 ```
 
 ## Quick start
@@ -43,10 +43,15 @@ API keys resolve from the process environment first, `.env` second.
 
 ## Commands
 
-- **`run "<prompt>"`** — one full agent turn: tool calls execute live, then
-  the process prints the answer plus a token/cost line and exits.
+- **`run "<prompt>"`** — one full agent turn: tool calls execute live, text
+  streams in as it is generated, then the process prints a token/cost line
+  and exits.
 - **`chat`** — same machinery with persistent history across turns.
   Blank lines are ignored; `/exit` or `/quit` or Ctrl-D ends the session.
+
+Both stream responses live over SSE (Anthropic and OpenAI-compatible
+endpoints); if a provider/transport cannot stream, they fall back to
+buffered replies automatically.
 
 ## Architecture
 
@@ -72,7 +77,8 @@ transports; the few real-I/O seams (`bootstrap`, command `execute`s, HTTP
 
 ## Limitations
 
-- No streaming responses; replies arrive whole.
+- Tool calls are dispatched only after their streamed arguments finish
+  arriving (per-turn), not mid-stream.
 - Tools are file-only (no shell execution).
 - The TOML reader covers the subset used by configs (tables, arrays of
   tables, inline arrays of strings/numbers/bools).
