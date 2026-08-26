@@ -5,7 +5,7 @@
 ### Your terminal just grew an extra pair of hands.
 
 **A featherweight agentic coding companion in pure Zig.**
-Reads your code. Edits your files. Streams its thoughts. All in one glorious megabyte.
+Reads your code. Edits your files. Streams its thoughts. All in about one megabyte, no runtime attached.
 
 [![Release](https://img.shields.io/github/v/release/jecertis/opennull?style=flat-square&color=brightgreen)](https://github.com/jecertis/opennull/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
@@ -37,7 +37,7 @@ opennull is an **agentic coding CLI** that treats your terminal like first class
 - 🔌 **Bring any provider** — Anthropic, Groq, Gemini, OpenRouter, or a local Ollama. First key wins, free tiers welcome.
 - 🎁 **Zero-config by default** — export one environment variable and you're running. Config file strictly optional.
 - 🛡️ **Sandboxed by design** — file tools operate inside your workspace unless you explicitly allow more.
-- 💸 **Knows what it costs** — every turn reports tokens and dollars, straight from the wire.
+- 💸 **Knows what it costs** — every turn reports tokens straight from the wire, and dollars too once you give it a pricing table.
 - 🧪 **Test-first to its bones** — every module carries BDD-style specs; 22 offline test binaries, zero network required.
 
 ## Install — one line, thirty seconds
@@ -50,8 +50,9 @@ That's it. The installer detects your platform, fetches the perfect binary from
 [Releases](https://github.com/jecertis/opennull/releases/latest), tucks it into
 `~/.local/bin`, and introduces itself.
 
-Prefer to grab a tarball by hand? They're sitting in Releases, ~0.5 MB each,
-statically linked for macOS (Intel & Apple Silicon) and Linux (x86_64 & arm64).
+Prefer to grab a tarball by hand? They're sitting in Releases, ~0.5 MB each:
+fully static Linux builds (x86_64 & arm64) and single-file macOS builds
+(Intel & Apple Silicon).
 
 > Downloading or cloning this repo gives you **source code**, not magic — use
 > the installer, drop a release tarball onto your `$PATH`, or build it yourself
@@ -126,7 +127,7 @@ Requires **Zig 0.16.0**.
 
 ```sh
 zig build            # binary at zig-out/bin/opennull
-zig build test       # 22 offline test binaries, 136+ specs, zero network needed
+zig build test       # 22 offline test binaries, 136 specs, zero network needed
 zig build -Doptimize=ReleaseSafe -Dstrip=true   # the release-grade binary
 ```
 
