@@ -36,6 +36,21 @@ pub const OpenAiCompatProvider = struct {
 
         return parseResponseBody(allocator, resp.body);
     }
+
+    /// Streaming arrives in a later cycle; until then the loop's fallback
+    /// path uses plain chat.
+    pub fn chatStreaming(
+        self: OpenAiCompatProvider,
+        allocator: std.mem.Allocator,
+        req: provider.ChatRequest,
+        sink: provider.StreamSink,
+    ) !provider.ChatResponse {
+        _ = self;
+        _ = allocator;
+        _ = req;
+        _ = sink;
+        return error.NotSupported;
+    }
 };
 
 fn roleString(r: provider.Role) []const u8 {

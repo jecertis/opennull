@@ -41,6 +41,8 @@ pub const ChatRequest = struct {
     messages: []const Message,
     tools: []const ToolSpec = &.{},
     max_tokens: u32 = 4096,
+    /// Stream the reply as server-sent events instead of one JSON body.
+    stream: bool = false,
 };
 
 pub const StopReason = enum { end_turn, tool_use, max_tokens, other };
@@ -126,8 +128,36 @@ pub const HttpResponse = struct {
 pub const Transport = struct {
     ptr: *anyopaque,
     sendFn: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, req: HttpRequest) anyerror!HttpResponse,
+    /// Optional incremental variant backing streamed chats. Transports
+    /// without it yield error.NotSupported from openStream, and callers
+    /// fall back to buffered `send`.
+    openFn: ?*const fn (ptr: *anyopaque, allocator: std.mem.Allocator, req: HttpRequest) anyerror!StreamConnection = null,
 
     pub fn send(self: Transport, allocator: std.mem.Allocator, req: HttpRequest) !HttpResponse {
         return self.sendFn(self.ptr, allocator, req);
+    }
+
+    pub fn openStream(self: Transport, allocator: std.mem.Allocator, req: HttpRequest) !StreamConnection {
+        const f = self.openFn orelse return error.NotSupported;
+        return f(self.ptr, allocator, req);
+    }
+};
+
+/// A live HTTP response being consumed line by line (SSE). Lines alias an
+/// internal buffer and stay valid only until the next `nextLine` call.
+/// Errors mean the connection is dead.
+pub const StreamConnection = struct {
+    ptr: *anyopaque,
+    nextLineFn: *const fn (ptr: *anyopaque) anyerror!?[]const u8,
+    deinitFn: *const fn (ptr: *anyopaque) void,
+
+    /// Next raw line without its delimiter; null only on clean end of
+    /// body between lines.
+    pub fn nextLine(self: StreamConnection) anyerror!?[]const u8 {
+        return self.nextLineFn(self.ptr);
+    }
+
+    pub fn deinit(self: StreamConnection) void {
+        self.deinitFn(self.ptr);
     }
 };

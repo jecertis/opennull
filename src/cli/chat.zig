@@ -85,6 +85,7 @@ pub fn execute(
             .prompt => |text| {
                 const in_before = totals.input_tokens;
                 const out_before = totals.output_tokens;
+                var live = display.LiveTextPrinter{ .w = stdout, .prefix = "assistant> " };
                 const reply = session.sendPrompt(
                     arena.allocator(),
                     io,
@@ -93,16 +94,25 @@ pub fn execute(
                     &history,
                     boot.model,
                     text,
-                    activity_reporter.reporter(),
-                    &totals,
-                    boot.system_prompt,
+                    .{
+                        .reporter = activity_reporter.reporter(),
+                        .totals = &totals,
+                        .system = boot.system_prompt,
+                        .text_sink = live.sink(),
+                    },
                 ) catch |err| {
                     // Stay in the session: a failed request must not lose
                     // the conversation already accumulated.
                     try stdout.print("error: request failed: {t}\n", .{err});
                     continue;
                 };
-                try stdout.print("assistant> {s}\n", .{reply});
+                // Streaming already showed the reply live; only the
+                // non-streaming fallback needs it printed here.
+                if (live.printed_any) {
+                    try stdout.print("\n", .{});
+                } else {
+                    try stdout.print("assistant> {s}\n", .{reply});
+                }
                 const line = try display.formatTokensLine(
                     allocator,
                     totals.input_tokens - in_before,

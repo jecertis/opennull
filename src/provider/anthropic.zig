@@ -27,12 +27,52 @@ pub const AnthropicProvider = struct {
             .{ .name = "content-type", .value = "application/json" },
         };
 
-        const resp = try self.transport.send(allocator, .{ .url = url, .headers = &headers, .body = body });
+        return self.send(allocator, url, &headers, body);
+    }
+
+    fn send(self: AnthropicProvider, allocator: std.mem.Allocator, url: []const u8, headers: []const provider.HttpHeader, body: []const u8) !provider.ChatResponse {
+        const resp = try self.transport.send(allocator, .{ .url = url, .headers = headers, .body = body });
         defer allocator.free(resp.body);
 
         if (resp.status != 200) return error.ApiError;
 
         return parseResponseBody(allocator, resp.body);
+    }
+
+    /// Streamed variant of chat: text deltas (and tool_use openings) are
+    /// pushed to `sink` as they arrive, AND the complete assembled response
+    /// is returned — callers keep the exact non-streaming semantics. Falls
+    /// back to buffered chat when the transport cannot stream.
+    pub fn chatStreaming(
+        self: AnthropicProvider,
+        allocator: std.mem.Allocator,
+        req_in: provider.ChatRequest,
+        sink: provider.StreamSink,
+    ) !provider.ChatResponse {
+        var req = req_in;
+        req.stream = true;
+
+        const body = try buildRequestBody(allocator, req);
+        defer allocator.free(body);
+
+        const url = try std.fmt.allocPrint(allocator, "{s}/v1/messages", .{self.base_url});
+        defer allocator.free(url);
+
+        const headers = [_]provider.HttpHeader{
+            .{ .name = "x-api-key", .value = self.api_key },
+            .{ .name = "anthropic-version", .value = "2023-06-01" },
+            .{ .name = "content-type", .value = "application/json" },
+        };
+
+        const conn = try self.transport.openStream(allocator, .{ .url = url, .headers = &headers, .body = body });
+        defer conn.deinit();
+
+        // Deliberately NO deinit on this decoder: the assembled response
+        // references its memory, which belongs to the caller's
+        // bulk-reclaim allocator (same ownership rule as loop.runTurn).
+        var decoder = StreamDecoder.init(allocator, sink);
+        while (try conn.nextLine()) |line| try decoder.feedLine(line);
+        return decoder.buildResponse();
     }
 };
 
@@ -89,6 +129,8 @@ fn buildRequestBody(a: std.mem.Allocator, req: provider.ChatRequest) ![]u8 {
         }
         try buf.append(a, ']');
     }
+
+    if (req.stream) try buf.appendSlice(a, ",\"stream\":true");
 
     try buf.append(a, '}');
     return buf.toOwnedSlice(a);

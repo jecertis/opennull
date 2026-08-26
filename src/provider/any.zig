@@ -20,4 +20,17 @@ pub const AnyProvider = union(enum) {
             inline else => |p| p.chat(allocator, req),
         };
     }
+
+    /// Streamed variant; providers without stream support return
+    /// error.NotSupported (callers fall back to buffered chat).
+    pub fn chatStreaming(
+        self: AnyProvider,
+        allocator: std.mem.Allocator,
+        req: provider.ChatRequest,
+        sink: provider.StreamSink,
+    ) !provider.ChatResponse {
+        return switch (self) {
+            inline else => |p| p.chatStreaming(allocator, req, sink),
+        };
+    }
 };

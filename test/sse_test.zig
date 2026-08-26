@@ -293,3 +293,90 @@ test "consecutive text blocks do not bleed into each other" {
     try std.testing.expectEqualStrings("first block", resp.content[0].text);
     try std.testing.expectEqualStrings("second", resp.content[1].text);
 }
+
+// -- provider-level streaming --------------------------------------------
+
+/// Transport whose openFn serves a scripted SSE line sequence and captures
+/// the outgoing request body. `send` is never expected on this transport.
+const ScriptedStreamTransport = struct {
+    lines: []const []const u8,
+    captured_body: []u8 = "",
+    allocator: std.mem.Allocator,
+
+    fn transport(self: *ScriptedStreamTransport) provider.Transport {
+        return .{ .ptr = self, .sendFn = unexpectedSend, .openFn = open };
+    }
+
+    fn unexpectedSend(ptr: *anyopaque, allocator: std.mem.Allocator, req: provider.HttpRequest) anyerror!provider.HttpResponse {
+        _ = ptr;
+        _ = allocator;
+        _ = req;
+        @panic("buffered send must not run when streaming is available");
+    }
+
+    fn open(ptr: *anyopaque, allocator: std.mem.Allocator, req: provider.HttpRequest) anyerror!provider.StreamConnection {
+        const self: *ScriptedStreamTransport = @ptrCast(@alignCast(ptr));
+        self.captured_body = try allocator.dupe(u8, req.body);
+        return .{ .ptr = self, .nextLineFn = nextLine, .deinitFn = deinitStream };
+    }
+
+    fn nextLine(ptr: *anyopaque) anyerror!?[]const u8 {
+        const self: *ScriptedStreamTransport = @ptrCast(@alignCast(ptr));
+        if (self.lines.len == 0) return null;
+        const line = self.lines[0];
+        self.lines = self.lines[1..];
+        return line;
+    }
+
+    fn deinitStream(ptr: *anyopaque) void {
+        _ = ptr;
+    }
+};
+
+// Scenario: Given a transport that streams SSE lines, when chatStreaming
+// runs, then the request carries "stream":true, live deltas reach the sink,
+// AND the fully assembled response comes back with stop reason and usage.
+test "chatStreaming sends stream flag, emits deltas, returns complete response" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var t = ScriptedStreamTransport{
+        .allocator = a,
+        .lines = &.{
+            "event: content_block_start",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}",
+            "",
+            "event: content_block_delta",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"He\"}}",
+            "",
+            "event: content_block_delta",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"y\"}}",
+            "",
+            "event: content_block_stop",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}",
+            "",
+            "event: message_delta",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":9,\"output_tokens\":2}}",
+            "",
+            "event: message_stop",
+            "data: {\"type\":\"message_stop\"}",
+            "",
+        },
+    };
+    const p = anthropic.AnthropicProvider{ .transport = t.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
+
+    var recorder = RecordingSink{ .allocator = a };
+    defer recorder.events.deinit(a);
+
+    const resp = try p.chatStreaming(a, .{ .model = "m", .messages = &.{} }, recorder.sink());
+
+    try std.testing.expect(std.mem.indexOf(u8, t.captured_body, "\"stream\":true") != null);
+    try std.testing.expectEqual(@as(usize, 2), recorder.events.items.len);
+    try std.testing.expectEqualStrings("He", recorder.events.items[0].text);
+    try std.testing.expectEqualStrings("y", recorder.events.items[1].text);
+
+    try std.testing.expectEqual(provider.StopReason.end_turn, resp.stop_reason);
+    try std.testing.expectEqualStrings("Hey", resp.content[0].text);
+    try std.testing.expectEqual(@as(u32, 9), resp.usage.?.input_tokens);
+}

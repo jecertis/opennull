@@ -62,6 +62,7 @@ pub fn execute(
     var history: session.History = .empty;
     var totals: usage_mod.UsageTotals = .{};
     var activity_reporter = display.StdoutReporter{ .allocator = allocator, .w = stdout };
+    var live = display.LiveTextPrinter{ .w = stdout, .prefix = "" };
 
     const reply = session.sendPrompt(
         arena.allocator(),
@@ -71,14 +72,21 @@ pub fn execute(
         &history,
         boot.model,
         prompt,
-        activity_reporter.reporter(),
-        &totals,
-        boot.system_prompt,
+        .{
+            .reporter = activity_reporter.reporter(),
+            .totals = &totals,
+            .system = boot.system_prompt,
+            .text_sink = live.sink(),
+        },
     ) catch |err| {
         try stdout.print("error: request failed: {t}\n", .{err});
         return;
     };
-    try stdout.print("{s}\n", .{reply});
+    if (live.printed_any) {
+        try stdout.print("\n", .{});
+    } else {
+        try stdout.print("{s}\n", .{reply});
+    }
 
     const line = try display.formatTokensLine(
         allocator,

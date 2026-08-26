@@ -4,7 +4,37 @@
 //! test/display_test.zig.
 const std = @import("std");
 const loop = @import("../agent/loop.zig");
+const provider = @import("../provider/provider.zig");
 const usage_mod = @import("../agent/usage.zig");
+
+/// Prints streamed text deltas the moment they arrive, emitting the prefix
+/// ("assistant> " or "") before the first chunk. `printed_any` lets the
+/// caller know whether to skip re-printing the (now already visible) reply.
+pub const LiveTextPrinter = struct {
+    w: *std.Io.Writer,
+    prefix: []const u8,
+    printed_any: bool = false,
+
+    pub fn sink(self: *LiveTextPrinter) provider.StreamSink {
+        return .{ .ptr = self, .eventFn = onEvent };
+    }
+
+    fn onEvent(ptr: *anyopaque, ev: provider.StreamEvent) void {
+        const self: *LiveTextPrinter = @ptrCast(@alignCast(ptr));
+        switch (ev) {
+            .text => |t| {
+                if (!self.printed_any) {
+                    self.w.print("{s}", .{self.prefix}) catch return;
+                    self.printed_any = true;
+                }
+                self.w.writeAll(t) catch return;
+                self.w.flush() catch {};
+            },
+            // Tool openings are surfaced by StdoutReporter at dispatch time.
+            .tool_use_started => {},
+        }
+    }
+};
 
 /// "[tool] file_read {\"path\":\"a.txt\"}" — the tool's name plus its
 /// compact JSON input. Caller frees.
