@@ -1,14 +1,14 @@
 //! `opennull chat` — an interactive multi-turn REPL on top of the agent
-//! session. `parseLine` and the tool-activity formatters are pure and fully
-//! unit-tested (test/chat_test.zig); `execute` is the thin, deliberately
-//! untestable seam doing real stdin/stdout/network I/O (provider comes from
-//! cli/bootstrap's config.toml-driven path).
+//! session. `parseLine` is pure and fully unit-tested (test/chat_test.zig);
+//! `execute` is the thin, deliberately untestable seam doing real stdin/
+//! stdout/network I/O (provider comes from cli/bootstrap's config.toml-
+//! driven path; presentation helpers live in cli/display.zig).
 const std = @import("std");
-const loop = @import("../agent/loop.zig");
 const sandbox = @import("../security/sandbox.zig");
 const session = @import("../agent/session.zig");
 const usage_mod = @import("../agent/usage.zig");
 const bootstrap = @import("bootstrap.zig");
+const display = @import("display.zig");
 
 pub const ParsedLine = union(enum) {
     /// Empty or whitespace-only input: ignore without an API call.
@@ -27,78 +27,6 @@ pub fn parseLine(raw: []const u8) ParsedLine {
     return .{ .prompt = line };
 }
 
-/// "[tool] file_read {\"path\":\"a.txt\"}" — the tool's name plus its
-/// compact JSON input. Caller frees.
-pub fn formatToolStarted(
-    allocator: std.mem.Allocator,
-    name: []const u8,
-    input: std.json.Value,
-) ![]u8 {
-    const input_json = try std.json.Stringify.valueAlloc(allocator, input, .{});
-    defer allocator.free(input_json);
-    return std.fmt.allocPrint(allocator, "[tool] {s} {s}", .{ name, input_json });
-}
-
-/// "[tool] file_read ok" on success; on failure only the FIRST line of the
-/// detail is shown (details can be whole file contents or stack-ish text).
-/// Caller frees.
-pub fn formatToolFinished(
-    allocator: std.mem.Allocator,
-    name: []const u8,
-    ok: bool,
-    detail: []const u8,
-) ![]u8 {
-    if (ok) return std.fmt.allocPrint(allocator, "[tool] {s} ok", .{name});
-    const first_line_len = std.mem.indexOfScalar(u8, detail, '\n') orelse detail.len;
-    return std.fmt.allocPrint(allocator, "[tool] {s} failed: {s}", .{ name, detail[0..first_line_len] });
-}
-
-/// "tokens> <in> in / <out> out this turn | session <in> in / <out> out"
-/// plus, when the model has a pricing entry, " | $<cost>". Caller frees.
-pub fn formatTokensLine(
-    allocator: std.mem.Allocator,
-    turn_in: u64,
-    turn_out: u64,
-    totals: usage_mod.UsageTotals,
-    cost: ?f64,
-) ![]u8 {
-    const base = try std.fmt.allocPrint(
-        allocator,
-        "tokens> {d} in / {d} out this turn | session {d} in / {d} out",
-        .{ turn_in, turn_out, totals.input_tokens, totals.output_tokens },
-    );
-    const c = cost orelse return base;
-    defer allocator.free(base);
-    return std.fmt.allocPrint(allocator, "{s} | ${d:.4}", .{ base, c });
-}
-
-/// Prints tool activity to the REPL's stdout as it happens. Best-effort:
-/// notify never fails and swallows write errors (losing an activity line
-/// must not abort the agent turn).
-const StdoutReporter = struct {
-    allocator: std.mem.Allocator,
-    w: *std.Io.Writer,
-
-    fn reporter(self: *StdoutReporter) loop.Reporter {
-        return .{ .ptr = self, .notifyFn = notify };
-    }
-
-    fn notify(ptr: *anyopaque, activity: loop.ToolActivity) void {
-        const self: *StdoutReporter = @ptrCast(@alignCast(ptr));
-        self.print(activity) catch {};
-    }
-
-    fn print(self: *StdoutReporter, activity: loop.ToolActivity) !void {
-        const line = switch (activity) {
-            .started => |e| try formatToolStarted(self.allocator, e.name, e.input),
-            .finished => |e| try formatToolFinished(self.allocator, e.name, e.ok, e.detail),
-        };
-        defer self.allocator.free(line);
-        try self.w.print("{s}\n", .{line});
-        self.w.flush() catch {}; // show activity immediately, even mid-turn
-    }
-};
-
 /// Reads lines from stdin until EOF or /exit, running a full agent turn
 /// per prompt with the whole-session history retained. One arena backs the
 /// entire session and reclaims everything on exit.
@@ -114,22 +42,9 @@ pub fn execute(
     };
     defer boot.deinit();
 
-    // Open "." to get a real directory handle: on macOS, realPath resolves
-    // via fcntl(F_GETPATH) which needs a real fd — the AT.FDCWD sentinel
-    // behind Dir.cwd() would fail there.
-    var workspace_dir = std.Io.Dir.cwd().openDir(io, ".", .{}) catch |err| {
-        try stdout.print("error: cannot open workspace root: {t}\n", .{err});
-        return;
-    };
-    defer workspace_dir.close(io);
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd_len = workspace_dir.realPath(io, &root_buf) catch |err| {
-        try stdout.print("error: cannot resolve workspace root: {t}\n", .{err});
-        return;
-    };
     // Extra readable paths come straight from config.toml's [sandbox] allow.
     const policy = sandbox.SecurityPolicy{
-        .workspace_root = root_buf[0..cwd_len],
+        .workspace_root = boot.workspace_root,
         .allow = boot.config.sandbox_allow,
     };
 
@@ -139,7 +54,7 @@ pub fn execute(
     var history: session.History = .empty;
     var totals: usage_mod.UsageTotals = .{};
 
-    var activity_reporter = StdoutReporter{ .allocator = allocator, .w = stdout };
+    var activity_reporter = display.StdoutReporter{ .allocator = allocator, .w = stdout };
 
     try stdout.print(
         "opennull chat — tools enabled, workspace: {s}\n" ++
@@ -187,7 +102,7 @@ pub fn execute(
                     continue;
                 };
                 try stdout.print("assistant> {s}\n", .{reply});
-                const line = try formatTokensLine(
+                const line = try display.formatTokensLine(
                     allocator,
                     totals.input_tokens - in_before,
                     totals.output_tokens - out_before,

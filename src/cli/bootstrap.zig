@@ -21,13 +21,19 @@ const max_config_bytes: usize = 1 << 20;
 
 pub const Error =
     std.Io.Dir.ReadFileAllocError ||
+    std.Io.Dir.OpenError ||
+    std.Io.Dir.RealPathError ||
     config_mod.LoadError ||
     router.SelectError ||
     router.BuildError;
 
 pub const Bootstrapped = struct {
-    /// Owns every string referenced by provider/model below. Deinit last.
+    /// Owns every string referenced by provider/model/workspace_root below.
+    /// Deinit last.
     config: config_mod.Config,
+    /// Absolute workspace root (the process's starting directory), resolved
+    /// once here so both commands share one definition of "the workspace".
+    workspace_root: []const u8,
     /// Heap-anchored so the transport pointers inside `provider` stay valid
     /// for the lifetime of this value.
     _http_transport: *http.HttpTransport,
@@ -37,6 +43,7 @@ pub const Bootstrapped = struct {
 
     pub fn deinit(self: *Bootstrapped) void {
         self.config.deinit();
+        self._allocator.free(self.workspace_root);
         self._allocator.destroy(self._http_transport);
     }
 };
@@ -63,6 +70,18 @@ pub fn bootstrap(
     var cfg = try config_mod.load(allocator, toml_contents, &dotenv_map, environ_map);
     errdefer cfg.deinit();
 
+    // Open "." to get a real directory handle: on macOS, realPath resolves
+    // via fcntl(F_GETPATH) which needs a real fd — the AT.FDCWD sentinel
+    // behind Dir.cwd() would fail there.
+    var workspace_dir = std.Io.Dir.cwd().openDir(io, ".", .{}) catch |err| switch (err) {
+        else => return err,
+    };
+    defer workspace_dir.close(io);
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd_len = try workspace_dir.realPath(io, &root_buf);
+    const workspace_root = try allocator.dupe(u8, root_buf[0..cwd_len]);
+    errdefer allocator.free(workspace_root);
+
     const selected = try router.select(&cfg, cfg.default_hint);
 
     const t = try allocator.create(http.HttpTransport);
@@ -70,6 +89,7 @@ pub fn bootstrap(
 
     return .{
         .config = cfg,
+        .workspace_root = workspace_root,
         ._http_transport = t,
         ._allocator = allocator,
         .provider = try router.build(&cfg, selected, t.transport()),
