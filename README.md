@@ -11,7 +11,7 @@ Pre-release software built test-first (every module has BDD-style specs in
 
 ```sh
 zig build            # binary at zig-out/bin/opennull
-zig build test       # full suite: 23 test binaries, offline, no network needed
+zig build test       # full suite: 22 test binaries, offline, no network needed
 ```
 
 ## Quick start
