@@ -10,6 +10,7 @@ const http = @import("../provider/http.zig");
 
 pub const ParsedArgs = union(enum) {
     run: struct { prompt: []const u8 },
+    chat,
     missing_prompt,
     unknown,
 };
@@ -17,24 +18,18 @@ pub const ParsedArgs = union(enum) {
 /// `args` excludes the program name, e.g. `["run", "fix the bug"]`.
 pub fn parseArgs(args: []const []const u8) ParsedArgs {
     if (args.len == 0) return .unknown;
+    if (std.mem.eql(u8, args[0], "chat")) {
+        if (args.len > 1) return .unknown;
+        return .chat;
+    }
     if (!std.mem.eql(u8, args[0], "run")) return .unknown;
     if (args.len < 2 or args[1].len == 0) return .missing_prompt;
     return .{ .run = .{ .prompt = args[1] } };
 }
 
-/// Concatenates every `.text` content block, skipping tool_use/tool_result
-/// blocks. Caller frees the returned slice.
-pub fn extractText(allocator: std.mem.Allocator, response: provider.ChatResponse) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
-    errdefer buf.deinit(allocator);
-    for (response.content) |block| {
-        switch (block) {
-            .text => |t| try buf.appendSlice(allocator, t),
-            else => {},
-        }
-    }
-    return buf.toOwnedSlice(allocator);
-}
+/// Reply-text extraction moved to provider.extractText so the chat session
+/// and future TUI share one implementation.
+pub const extractText = provider.extractText;
 
 /// Hardcodes ANTHROPIC_API_KEY from the real process environment and a
 /// fixed model/endpoint for this first end-to-end milestone; a full

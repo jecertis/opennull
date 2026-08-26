@@ -57,6 +57,21 @@ pub const ChatResponse = struct {
     }
 };
 
+/// Concatenates every `.text` content block of a response, skipping
+/// tool_use/tool_result blocks. Shared by the one-shot CLI, the chat
+/// session, and any future TUI. Caller frees the returned slice.
+pub fn extractText(allocator: std.mem.Allocator, response: ChatResponse) ![]u8 {
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(allocator);
+    for (response.content) |block| {
+        switch (block) {
+            .text => |t| try buf.appendSlice(allocator, t),
+            else => {},
+        }
+    }
+    return buf.toOwnedSlice(allocator);
+}
+
 // -- transport (injectable so providers are unit-testable without a real
 //    network call) -------------------------------------------------------
 

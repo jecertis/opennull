@@ -1,6 +1,7 @@
 const std = @import("std");
 const opennull = @import("opennull");
 const run = opennull.cli.run;
+const chat = opennull.cli.chat;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -15,8 +16,13 @@ pub fn main(init: std.process.Init) !void {
 
     switch (run.parseArgs(args)) {
         .run => |r| try run.execute(allocator, io, init.environ_map, r.prompt, w),
+        .chat => try chat.execute(allocator, io, init.environ_map, w),
         .missing_prompt => try w.print("usage: opennull run \"<prompt>\"\n", .{}),
-        .unknown => try w.print("opennull v{s}\nusage: opennull run \"<prompt>\"\n", .{opennull.version}),
+        .unknown => try w.print(
+            "opennull v{s}\nusage: opennull run \"<prompt>\"\n" ++
+                "       opennull chat\n",
+            .{opennull.version},
+        ),
     }
 
     try w.flush();

@@ -16,6 +16,7 @@ pub const provider = struct {
 };
 pub const cli = struct {
     pub const run = @import("cli/run.zig");
+    pub const chat = @import("cli/chat.zig");
 };
 pub const tools = struct {
     pub const tool = @import("tools/tool.zig");
@@ -23,6 +24,7 @@ pub const tools = struct {
 };
 pub const agent = struct {
     pub const loop = @import("agent/loop.zig");
+    pub const session = @import("agent/session.zig");
 };
 
 pub const version = "0.1.0";
