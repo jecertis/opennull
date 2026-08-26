@@ -9,26 +9,18 @@ Pre-release software built test-first (every module has BDD-style specs in
 
 ## Install
 
-**Download a binary** from [Releases](https://github.com/jecertis/opennull/releases/latest) —
-statically-linked Linux and macOS builds for x86_64 and arm64 (~0.5 MB tarballs):
+**One line** (macOS / Linux; installs to `~/.local/bin`):
 
 ```sh
-curl -LO https://github.com/jecertis/opennull/releases/latest/download/opennull-v0.1.1-x86_64-macos.tar.gz
-tar -xzf opennull-v0.1.1-*.tar.gz && cd opennull-v0.1.1-*
-./opennull
+curl -fsSL https://raw.githubusercontent.com/jecertis/opennull/main/install.sh | sh
 ```
 
-**Or build from source:**
+Or grab a tarball directly from [Releases](https://github.com/jecertis/opennull/releases/latest) —
+statically-linked Linux and macOS builds for x86_64 and arm64 (~0.5 MB).
 
-## Build & test
-
-Requires **Zig 0.16.0**.
-
-```sh
-zig build            # binary at zig-out/bin/opennull
-zig build test       # full suite: 22 test binaries, offline, no network needed
-zig build -Doptimize=ReleaseSafe -Dstrip=true   # release binary
-```
+Note: downloading or cloning the repo alone gives you **source code**, not a
+runnable `opennull` — use the installer above, extract a release tarball onto
+your `$PATH`, or build it yourself below.
 
 ## Quick start
 
@@ -42,6 +34,16 @@ opennull chat                         # multi-turn REPL; /exit or Ctrl-D to quit
 
 `opennull` looks for `config.toml` and `.env` in the current directory — the
 directory you start it in is the sandboxed workspace root.
+
+## Build & test
+
+Requires **Zig 0.16.0**.
+
+```sh
+zig build            # binary at zig-out/bin/opennull
+zig build test       # full suite: 22 test binaries, offline, no network needed
+zig build -Doptimize=ReleaseSafe -Dstrip=true   # release binary
+```
 
 ## Configuration
 
