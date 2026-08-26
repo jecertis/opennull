@@ -1,18 +1,13 @@
 //! `opennull chat` — an interactive multi-turn REPL on top of the agent
-//! session. `parseLine` is pure and fully unit-tested (test/chat_test.zig);
-//! `execute` is the thin, deliberately untestable seam doing real stdin/
-//! stdout/network I/O — same pattern as cli/run.zig's `execute`.
+//! session. `parseLine` and the tool-activity formatters are pure and fully
+//! unit-tested (test/chat_test.zig); `execute` is the thin, deliberately
+//! untestable seam doing real stdin/stdout/network I/O (provider comes from
+//! cli/bootstrap's config.toml-driven path).
 const std = @import("std");
-const provider = @import("../provider/provider.zig");
-const anthropic = @import("../provider/anthropic.zig");
-const http = @import("../provider/http.zig");
-const sandbox = @import("../security/sandbox.zig");
 const loop = @import("../agent/loop.zig");
+const sandbox = @import("../security/sandbox.zig");
 const session = @import("../agent/session.zig");
-
-/// Fixed model/endpoint until the router-driven path lands (Phase 5),
-/// matching cli/run.zig's interim hardcode.
-const default_model = "claude-sonnet-5";
+const bootstrap = @import("bootstrap.zig");
 
 pub const ParsedLine = union(enum) {
     /// Empty or whitespace-only input: ignore without an API call.
@@ -93,17 +88,11 @@ pub fn execute(
     environ_map: *const std.process.Environ.Map,
     stdout: *std.Io.Writer,
 ) !void {
-    const api_key = environ_map.get("ANTHROPIC_API_KEY") orelse {
-        try stdout.print("error: ANTHROPIC_API_KEY is not set in the environment\n", .{});
+    var boot = bootstrap.bootstrap(allocator, io, environ_map) catch |err| {
+        try stdout.print("error: {s} ({t})\n", .{ bootstrap.errorMessage(err), err });
         return;
     };
-
-    var http_transport = http.HttpTransport{ .allocator = allocator, .io = io };
-    const p = anthropic.AnthropicProvider{
-        .transport = http_transport.transport(),
-        .base_url = "https://api.anthropic.com",
-        .api_key = api_key,
-    };
+    defer boot.deinit();
 
     // Open "." to get a real directory handle: on macOS, realPath resolves
     // via fcntl(F_GETPATH) which needs a real fd — the AT.FDCWD sentinel
@@ -157,10 +146,10 @@ pub fn execute(
                 const reply = session.sendPrompt(
                     arena.allocator(),
                     io,
-                    p,
+                    boot.provider,
                     &policy,
                     &history,
-                    default_model,
+                    boot.model,
                     text,
                     activity_reporter.reporter(),
                 ) catch |err| {

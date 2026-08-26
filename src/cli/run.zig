@@ -1,12 +1,10 @@
 //! `opennull run "<prompt>"` — a one-shot chat turn. `parseArgs` and
 //! `extractText` are pure and fully unit-tested (test/run_test.zig);
 //! `execute` is the thin, deliberately untestable seam that does real I/O
-//! (reads a real env var, opens a real network connection) — see the
-//! plan's manual smoke-test section.
+//! (boots config.toml via cli/bootstrap, opens a real network connection).
 const std = @import("std");
 const provider = @import("../provider/provider.zig");
-const anthropic = @import("../provider/anthropic.zig");
-const http = @import("../provider/http.zig");
+const bootstrap = @import("bootstrap.zig");
 
 pub const ParsedArgs = union(enum) {
     run: struct { prompt: []const u8 },
@@ -31,10 +29,9 @@ pub fn parseArgs(args: []const []const u8) ParsedArgs {
 /// and future TUI share one implementation.
 pub const extractText = provider.extractText;
 
-/// Hardcodes ANTHROPIC_API_KEY from the real process environment and a
-/// fixed model/endpoint for this first end-to-end milestone; a full
-/// config.toml + router-driven path replaces this once router.zig exists
-/// (see the plan's Phase 5).
+/// Boots the router-driven path (config.toml + .env + default hint) and
+/// sends the prompt as a single-turn chat through whichever provider the
+/// route selects.
 pub fn execute(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -42,25 +39,19 @@ pub fn execute(
     prompt: []const u8,
     stdout: *std.Io.Writer,
 ) !void {
-    const api_key = environ_map.get("ANTHROPIC_API_KEY") orelse {
-        try stdout.print("error: ANTHROPIC_API_KEY is not set in the environment\n", .{});
+    var boot = bootstrap.bootstrap(allocator, io, environ_map) catch |err| {
+        try stdout.print("error: {s} ({t})\n", .{ bootstrap.errorMessage(err), err });
         return;
     };
-
-    var http_transport = http.HttpTransport{ .allocator = allocator, .io = io };
-    const p = anthropic.AnthropicProvider{
-        .transport = http_transport.transport(),
-        .base_url = "https://api.anthropic.com",
-        .api_key = api_key,
-    };
+    defer boot.deinit();
 
     const messages = [_]provider.Message{.{
         .role = .user,
         .content = &.{.{ .text = prompt }},
     }};
 
-    var response = p.chat(allocator, .{
-        .model = "claude-sonnet-5",
+    var response = boot.provider.chat(allocator, .{
+        .model = boot.model,
         .messages = &messages,
     }) catch |err| {
         try stdout.print("error: request failed: {t}\n", .{err});

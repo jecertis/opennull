@@ -1,0 +1,33 @@
+# Sample opennull configuration. Copy into your project root as
+# `config.toml`. API keys are never written here — each provider names an
+# environment variable (process environment wins over a local `.env` file).
+
+[general]
+default_hint = "default"
+
+[providers.anthropic_primary]
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+
+# Any OpenAI-compatible endpoint works through the same neutral chat
+# interface — e.g. Ollama's OpenAI shim, vLLM, OpenRouter:
+[providers.local_openai]
+kind = "openai_compat"
+base_url = "http://localhost:11434/v1"
+api_key_env = "OPENAI_COMPAT_API_KEY"
+
+[[routes]]
+hint = "default"
+provider = "anthropic_primary"
+model = "claude-sonnet-5"
+tool_calling = true
+
+[[routes]]
+hint = "local"
+provider = "local_openai"
+model = "llama3.1"
+tool_calling = true
+
+[sandbox]
+allow = []

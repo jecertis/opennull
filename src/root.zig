@@ -19,6 +19,7 @@ pub const router = @import("router/router.zig");
 pub const cli = struct {
     pub const run = @import("cli/run.zig");
     pub const chat = @import("cli/chat.zig");
+    pub const bootstrap = @import("cli/bootstrap.zig");
 };
 pub const tools = struct {
     pub const tool = @import("tools/tool.zig");
