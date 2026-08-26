@@ -107,7 +107,11 @@ pub fn execute(
         try stdout.print("error: cannot resolve workspace root: {t}\n", .{err});
         return;
     };
-    const policy = sandbox.SecurityPolicy{ .workspace_root = root_buf[0..cwd_len] };
+    // Extra readable paths come straight from config.toml's [sandbox] allow.
+    const policy = sandbox.SecurityPolicy{
+        .workspace_root = root_buf[0..cwd_len],
+        .allow = boot.config.sandbox_allow,
+    };
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();

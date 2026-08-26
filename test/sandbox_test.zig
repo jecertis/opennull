@@ -108,3 +108,43 @@ test "absolute path outside workspace and outside all allow entries is rejected"
     const allowed = try policy.isAllowed(std.testing.allocator, "/etc/hosts");
     try std.testing.expect(!allowed);
 }
+
+// Scenario: Given an ABSOLUTE allow entry, when the requested path lies
+// beneath it, then access is granted despite being outside the workspace.
+test "path beneath an absolute allow entry is allowed" {
+    const policy = SecurityPolicy{
+        .workspace_root = "/workspace",
+        .allow = &.{"/home/user/.config/opennull"},
+    };
+    const allowed = try policy.isAllowed(std.testing.allocator, "/home/user/.config/opennull/config.toml");
+    try std.testing.expect(allowed);
+}
+
+// Scenario: Given a RELATIVE allow entry, when checked, then it resolves
+// against the workspace root first — config authors write sibling
+// directories as "../name", not absolute paths. Access is granted beneath
+// the resolved directory but NOT beside it.
+test "relative allow entry grants access beneath its resolved directory" {
+    const policy = SecurityPolicy{
+        .workspace_root = "/work/ws",
+        .allow = &.{"../shared-notes"},
+    };
+    // "/work/shared-notes/plan.md" — outside the root, beneath the entry.
+    const allowed = try policy.isAllowed(std.testing.allocator, "../shared-notes/plan.md");
+    try std.testing.expect(allowed);
+    // But a file merely NEXT to that directory is still denied.
+    const denied = try policy.isAllowed(std.testing.allocator, "../shared-notes-secret.txt");
+    try std.testing.expect(!denied);
+}
+
+// Scenario: Given an allow entry, when the requested path shares only a
+// string prefix with it (sibling dir "...-evil"), then access stays denied
+// — segment-boundary matching must hold for allow entries too.
+test "sibling prefix of an allow entry does not match" {
+    const policy = SecurityPolicy{
+        .workspace_root = "/work/ws",
+        .allow = &.{"/work/shared"},
+    };
+    const denied = try policy.isAllowed(std.testing.allocator, "/work/shared-evil/x.txt");
+    try std.testing.expect(!denied);
+}
