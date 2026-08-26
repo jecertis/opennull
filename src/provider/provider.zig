@@ -52,6 +52,28 @@ pub const Usage = struct {
     output_tokens: u32,
 };
 
+/// Live observations while a streamed chat response arrives. Text slices
+/// are only valid during the sink call (they alias the decode buffer);
+/// copy if retaining. The COMPLETE response is still handed back by the
+/// streaming call itself, so callers needing the whole text can ignore
+/// these and use the return value.
+pub const StreamEvent = union(enum) {
+    /// An increment of assistant text.
+    text: []const u8,
+    /// A tool_use block opened; its input arrives as later JSON fragments.
+    tool_use_started: struct { id: []const u8, name: []const u8 },
+};
+
+/// Push-style sink for stream events (same vtable style as Reporter).
+pub const StreamSink = struct {
+    ptr: *anyopaque,
+    eventFn: *const fn (ptr: *anyopaque, ev: StreamEvent) void,
+
+    pub fn event(self: StreamSink, ev: StreamEvent) void {
+        self.eventFn(self.ptr, ev);
+    }
+};
+
 /// Owns the parsed-JSON arena backing `content`'s strings/values (when
 /// built from a real response) — call `deinit()` when done with it.
 pub const ChatResponse = struct {

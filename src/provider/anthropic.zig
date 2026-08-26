@@ -4,6 +4,7 @@
 //! responses, since we don't control that shape. See test/anthropic_test.zig.
 const std = @import("std");
 const provider = @import("provider.zig");
+const sse = @import("sse.zig");
 const json_util = @import("json_util.zig");
 const appendJsonString = json_util.appendJsonString;
 const appendJsonValue = json_util.appendJsonValue;
@@ -209,3 +210,200 @@ fn parseUsage(root_obj: std.json.ObjectMap) ?provider.Usage {
     if (in_tok < 0 or out_tok < 0) return null;
     return .{ .input_tokens = @intCast(in_tok), .output_tokens = @intCast(out_tok) };
 }
+
+/// Decodes Anthropic's streaming SSE protocol into neutral StreamEvents
+/// while assembling the complete ChatResponse incrementally — the streamed
+/// call still returns a whole response at the end, so callers (the agent
+/// loop) keep their existing semantics. Ownership mirrors parseResponseBody:
+/// all strings live in the bulk-reclaim allocator you pass in. See
+/// test/sse_test.zig.
+pub const StreamDecoder = struct {
+    const BlockKind = enum { none, text, tool_use };
+
+    allocator: std.mem.Allocator,
+    sse: sse.Decoder,
+
+    blocks: std.ArrayListUnmanaged(provider.ContentBlock) = .empty,
+    block_kind: BlockKind = .none,
+    text_buf: std.ArrayListUnmanaged(u8) = .empty,
+    tool_id: std.ArrayListUnmanaged(u8) = .empty,
+    tool_name: std.ArrayListUnmanaged(u8) = .empty,
+    tool_json: std.ArrayListUnmanaged(u8) = .empty,
+    stop_reason: ?provider.StopReason = null,
+    usage: ?provider.Usage = null,
+
+    sink: ?provider.StreamSink = null,
+
+    pub fn init(allocator: std.mem.Allocator, sink: ?provider.StreamSink) StreamDecoder {
+        return .{ .allocator = allocator, .sse = .{ .allocator = allocator }, .sink = sink };
+    }
+
+    pub fn deinit(self: *StreamDecoder) void {
+        self.sse.deinit();
+        self.blocks.deinit(self.allocator);
+        self.text_buf.deinit(self.allocator);
+        self.tool_id.deinit(self.allocator);
+        self.tool_name.deinit(self.allocator);
+        self.tool_json.deinit(self.allocator);
+    }
+
+    fn emit(self: *StreamDecoder, ev: provider.StreamEvent) void {
+        if (self.sink) |s| s.event(ev);
+    }
+
+    /// Feeds one raw HTTP-body line. Errors only on allocation failure or a
+    /// data payload that is not valid JSON with the expected shape.
+    pub fn feedLine(self: *StreamDecoder, line: []const u8) !void {
+        const decoded = (try self.sse.feedLine(line)) orelse return;
+        try self.handleDecoded(decoded.event, decoded.data);
+    }
+
+    fn handleDecoded(self: *StreamDecoder, event: []const u8, data: []const u8) !void {
+        if (std.mem.eql(u8, event, "ping")) return;
+
+        const obj = switch (try std.json.parseFromSliceLeaky(std.json.Value, self.allocator, data, .{})) {
+            .object => |o| o,
+            else => return error.UnexpectedStreamEvent,
+        };
+
+        if (std.mem.eql(u8, event, "content_block_start")) {
+            const block = switch (obj.get("content_block") orelse return error.UnexpectedStreamEvent) {
+                .object => |o| o,
+                else => return error.UnexpectedStreamEvent,
+            };
+            const kind = switch (block.get("type") orelse return error.UnexpectedStreamEvent) {
+                .string => |s| s,
+                else => return error.UnexpectedStreamEvent,
+            };
+            if (std.mem.eql(u8, kind, "tool_use")) {
+                self.block_kind = .tool_use;
+                const id = switch (block.get("id") orelse return error.UnexpectedStreamEvent) {
+                    .string => |s| s,
+                    else => return error.UnexpectedStreamEvent,
+                };
+                const name = switch (block.get("name") orelse return error.UnexpectedStreamEvent) {
+                    .string => |s| s,
+                    else => return error.UnexpectedStreamEvent,
+                };
+                try self.tool_id.appendSlice(self.allocator, id);
+                try self.tool_name.appendSlice(self.allocator, name);
+                self.emit(.{ .tool_use_started = .{ .id = id, .name = name } });
+            } else if (std.mem.eql(u8, kind, "text")) {
+                self.block_kind = .text;
+            } else {
+                self.block_kind = .none;
+            }
+            return;
+        }
+
+        if (std.mem.eql(u8, event, "content_block_delta")) {
+            const delta = switch (obj.get("delta") orelse return error.UnexpectedStreamEvent) {
+                .object => |o| o,
+                else => return error.UnexpectedStreamEvent,
+            };
+            const dtype = switch (delta.get("type") orelse return error.UnexpectedStreamEvent) {
+                .string => |s| s,
+                else => return error.UnexpectedStreamEvent,
+            };
+            if (std.mem.eql(u8, dtype, "text_delta")) {
+                const text = switch (delta.get("text") orelse return error.UnexpectedStreamEvent) {
+                    .string => |s| s,
+                    else => return error.UnexpectedStreamEvent,
+                };
+                try self.text_buf.appendSlice(self.allocator, text);
+                self.emit(.{ .text = text });
+            } else if (std.mem.eql(u8, dtype, "input_json_delta")) {
+                const frag = switch (delta.get("partial_json") orelse return error.UnexpectedStreamEvent) {
+                    .string => |s| s,
+                    else => return error.UnexpectedStreamEvent,
+                };
+                try self.tool_json.appendSlice(self.allocator, frag);
+            }
+            return;
+        }
+
+        if (std.mem.eql(u8, event, "content_block_stop")) {
+            switch (self.block_kind) {
+                .text => try self.blocks.append(self.allocator, .{
+                    // Dupe before clearing: blocks must own their bytes even
+                    // though these buffers are reused by the next block.
+                    .text = try self.allocator.dupe(u8, self.text_buf.items),
+                }),
+                .tool_use => {
+                    const input = std.json.parseFromSliceLeaky(
+                        std.json.Value,
+                        self.allocator,
+                        self.tool_json.items,
+                        .{},
+                    ) catch std.json.Value{ .object = .empty };
+                    try self.blocks.append(self.allocator, .{ .tool_use = .{
+                        .id = try self.allocator.dupe(u8, self.tool_id.items),
+                        .name = try self.allocator.dupe(u8, self.tool_name.items),
+                        .input = input,
+                    } });
+                },
+                .none => {},
+            }
+            self.block_kind = .none;
+            self.text_buf.clearRetainingCapacity();
+            self.tool_id.clearRetainingCapacity();
+            self.tool_name.clearRetainingCapacity();
+            self.tool_json.clearRetainingCapacity();
+            return;
+        }
+
+        if (std.mem.eql(u8, event, "message_delta")) {
+            const delta = switch (obj.get("delta") orelse return error.UnexpectedStreamEvent) {
+                .object => |o| o,
+                else => return error.UnexpectedStreamEvent,
+            };
+            if (delta.get("stop_reason")) |sr| switch (sr) {
+                .string => |s| {
+                    self.stop_reason = if (std.mem.eql(u8, s, "end_turn"))
+                        .end_turn
+                    else if (std.mem.eql(u8, s, "tool_use"))
+                        .tool_use
+                    else if (std.mem.eql(u8, s, "max_tokens"))
+                        .max_tokens
+                    else
+                        .other;
+                },
+                else => {},
+            };
+            if (obj.get("usage")) |u| switch (u) {
+                .object => |uo| {
+                    const in_tok: i64 = if (uo.get("input_tokens")) |v| switch (v) {
+                        .integer => |n| n,
+                        else => 0,
+                    } else 0;
+                    const out_tok: i64 = if (uo.get("output_tokens")) |v| switch (v) {
+                        .integer => |n| n,
+                        else => 0,
+                    } else 0;
+                    if (in_tok >= 0 and out_tok >= 0 and (in_tok > 0 or out_tok > 0)) {
+                        self.usage = .{
+                            .input_tokens = @intCast(in_tok),
+                            .output_tokens = @intCast(out_tok),
+                        };
+                    }
+                },
+                else => {},
+            };
+            return;
+        }
+
+        // message_start / message_stop / others carry nothing we need.
+    }
+
+    /// Builds the complete response from accumulated blocks. Call after the
+    /// stream ends. The returned ChatResponse does NOT own `_raw` — its
+    /// strings live directly in this decoder's bulk-reclaim allocator.
+    pub fn buildResponse(self: *StreamDecoder) provider.ChatResponse {
+        return .{
+            .content = self.blocks.items,
+            .stop_reason = self.stop_reason orelse .end_turn,
+            .usage = self.usage,
+            ._raw = null,
+        };
+    }
+};

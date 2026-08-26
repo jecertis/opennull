@@ -14,6 +14,7 @@ pub const provider = struct {
     pub const openai_compat = @import("provider/openai_compat.zig");
     pub const any = @import("provider/any.zig");
     pub const http = @import("provider/http.zig");
+    pub const sse = @import("provider/sse.zig");
 };
 pub const router = @import("router/router.zig");
 pub const cli = struct {
