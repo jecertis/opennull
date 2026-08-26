@@ -108,3 +108,19 @@ test "non-200 status surfaces as an error" {
     const result = p.chat(std.testing.allocator, .{ .model = "gpt-test-model", .messages = &messages });
     try std.testing.expectError(error.ApiError, result);
 }
+
+// Scenario: Given an OpenAI-shaped response carrying prompt/completion
+// token counts, when parsed, then they surface as neutral input/output.
+test "maps prompt_tokens and completion_tokens to neutral usage" {
+    const scripted = ScriptedTransport{
+        .status = 200,
+        .body = "{\"choices\":[{\"message\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":55,\"completion_tokens\":6}}",
+    };
+    const p = openai.OpenAiCompatProvider{ .transport = scripted.transport(), .base_url = "https://api.openai.example", .api_key = "k" };
+    const messages = oneUserMessage("hi");
+    var resp = try p.chat(std.testing.allocator, .{ .model = "gpt-test-model", .messages = &messages });
+    defer resp.deinit();
+    const u = resp.usage.?;
+    try std.testing.expectEqual(@as(u32, 55), u.input_tokens);
+    try std.testing.expectEqual(@as(u32, 6), u.output_tokens);
+}

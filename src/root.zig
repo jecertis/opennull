@@ -28,6 +28,7 @@ pub const tools = struct {
 pub const agent = struct {
     pub const loop = @import("agent/loop.zig");
     pub const session = @import("agent/session.zig");
+    pub const usage = @import("agent/usage.zig");
 };
 
 pub const version = "0.1.0";

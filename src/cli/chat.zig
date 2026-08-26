@@ -7,6 +7,7 @@ const std = @import("std");
 const loop = @import("../agent/loop.zig");
 const sandbox = @import("../security/sandbox.zig");
 const session = @import("../agent/session.zig");
+const usage_mod = @import("../agent/usage.zig");
 const bootstrap = @import("bootstrap.zig");
 
 pub const ParsedLine = union(enum) {
@@ -50,6 +51,25 @@ pub fn formatToolFinished(
     if (ok) return std.fmt.allocPrint(allocator, "[tool] {s} ok", .{name});
     const first_line_len = std.mem.indexOfScalar(u8, detail, '\n') orelse detail.len;
     return std.fmt.allocPrint(allocator, "[tool] {s} failed: {s}", .{ name, detail[0..first_line_len] });
+}
+
+/// "tokens> <in> in / <out> out this turn | session <in> in / <out> out"
+/// plus, when the model has a pricing entry, " | $<cost>". Caller frees.
+pub fn formatTokensLine(
+    allocator: std.mem.Allocator,
+    turn_in: u64,
+    turn_out: u64,
+    totals: usage_mod.UsageTotals,
+    cost: ?f64,
+) ![]u8 {
+    const base = try std.fmt.allocPrint(
+        allocator,
+        "tokens> {d} in / {d} out this turn | session {d} in / {d} out",
+        .{ turn_in, turn_out, totals.input_tokens, totals.output_tokens },
+    );
+    const c = cost orelse return base;
+    defer allocator.free(base);
+    return std.fmt.allocPrint(allocator, "{s} | ${d:.4}", .{ base, c });
 }
 
 /// Prints tool activity to the REPL's stdout as it happens. Best-effort:
@@ -117,6 +137,7 @@ pub fn execute(
     defer arena.deinit();
 
     var history: session.History = .empty;
+    var totals: usage_mod.UsageTotals = .{};
 
     var activity_reporter = StdoutReporter{ .allocator = allocator, .w = stdout };
 
@@ -147,6 +168,8 @@ pub fn execute(
             .skip => continue,
             .exit => break,
             .prompt => |text| {
+                const in_before = totals.input_tokens;
+                const out_before = totals.output_tokens;
                 const reply = session.sendPrompt(
                     arena.allocator(),
                     io,
@@ -156,6 +179,7 @@ pub fn execute(
                     boot.model,
                     text,
                     activity_reporter.reporter(),
+                    &totals,
                 ) catch |err| {
                     // Stay in the session: a failed request must not lose
                     // the conversation already accumulated.
@@ -163,6 +187,15 @@ pub fn execute(
                     continue;
                 };
                 try stdout.print("assistant> {s}\n", .{reply});
+                const line = try formatTokensLine(
+                    allocator,
+                    totals.input_tokens - in_before,
+                    totals.output_tokens - out_before,
+                    totals,
+                    usage_mod.costOf(boot.config.pricing, boot.model, totals),
+                );
+                defer allocator.free(line);
+                try stdout.print("{s}\n", .{line});
             },
         }
     }

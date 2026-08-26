@@ -70,7 +70,7 @@ test "sendPrompt returns the reply and records both sides of the exchange" {
     const p = anthropic.AnthropicProvider{ .transport = transport.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
 
     var history: loop.History = .empty;
-    const reply = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", "first question", null);
+    const reply = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", "first question", null, null);
 
     try std.testing.expectEqualStrings("first answer", reply);
     try std.testing.expectEqual(@as(usize, 2), history.items.len);
@@ -101,8 +101,8 @@ test "a second prompt sends the accumulated conversation" {
     const p = anthropic.AnthropicProvider{ .transport = transport.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
 
     var history: loop.History = .empty;
-    _ = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", "my first question", null);
-    _ = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", "and a follow-up", null);
+    _ = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", "my first question", null, null);
+    _ = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", "and a follow-up", null, null);
 
     try std.testing.expectEqual(@as(usize, 2), transport.request_bodies.items.len);
 
@@ -144,7 +144,7 @@ test "prompts are deep-copied so overwriting the source buffer cannot corrupt hi
     var line_buffer: [64]u8 = undefined;
     @memcpy(line_buffer[0..13], "original text");
     const prompt = line_buffer[0..13];
-    _ = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", prompt, null);
+    _ = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", prompt, null, null);
 
     // Simulate the reader reusing its buffer for the next line.
     @memset(&line_buffer, 'x');
@@ -179,9 +179,36 @@ test "sendPrompt forwards tool activity to the caller's reporter" {
 
     var recorder = RecordingReporter{};
     defer recorder.events.deinit(std.testing.allocator);
-    _ = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", "read greeting.txt", recorder.reporter());
+    _ = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", "read greeting.txt", recorder.reporter(), null);
 
     try std.testing.expectEqual(@as(usize, 2), recorder.events.items.len);
     try std.testing.expectEqualStrings("file_read", recorder.events.items[0].started.name);
     try std.testing.expect(recorder.events.items[1].finished.ok);
+}
+
+// Scenario: Given a totals accumulator is handed to sendPrompt, when the
+// scripted response carries usage, then the session forwards it so callers
+// can price the whole conversation without touching the loop.
+test "sendPrompt accumulates reported usage into the caller's totals" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const policy = sandbox.SecurityPolicy{ .workspace_root = workspaceRootOf(tmp.dir, &root_buf) };
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var transport = CapturingTransport{ .responses = &.{
+        .{ .status = 200, .body = "{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":42,\"output_tokens\":3}}" },
+    } };
+    const p = anthropic.AnthropicProvider{ .transport = transport.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
+
+    var history: loop.History = .empty;
+    var totals: session.UsageTotals = .{};
+    _ = try session.sendPrompt(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", "hi", null, &totals);
+
+    try std.testing.expectEqual(@as(u32, 1), totals.requests);
+    try std.testing.expectEqual(@as(u64, 42), totals.input_tokens);
+    try std.testing.expectEqual(@as(u64, 3), totals.output_tokens);
 }

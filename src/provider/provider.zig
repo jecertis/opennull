@@ -45,11 +45,20 @@ pub const ChatRequest = struct {
 
 pub const StopReason = enum { end_turn, tool_use, max_tokens, other };
 
+/// Token accounting as reported by the provider API (both Anthropic and
+/// OpenAI-compatible endpoints carry it, under different wire names).
+pub const Usage = struct {
+    input_tokens: u32,
+    output_tokens: u32,
+};
+
 /// Owns the parsed-JSON arena backing `content`'s strings/values (when
 /// built from a real response) — call `deinit()` when done with it.
 pub const ChatResponse = struct {
     content: []const ContentBlock,
     stop_reason: StopReason,
+    /// Present when the provider reported token usage for this request.
+    usage: ?Usage = null,
     _raw: ?std.json.Parsed(std.json.Value) = null,
 
     pub fn deinit(self: *ChatResponse) void {

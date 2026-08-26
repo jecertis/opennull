@@ -69,7 +69,7 @@ test "executes a requested tool and continues to the final answer" {
 
     var history = try oneUserMessage(a, "read greeting.txt");
 
-    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null);
+    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null, null);
 
     try std.testing.expectEqual(.end_turn, final.stop_reason);
     try std.testing.expectEqualStrings("done reading", final.content[0].text);
@@ -104,7 +104,7 @@ test "an unknown tool name produces a failed tool_result instead of crashing" {
 
     var history = try oneUserMessage(a, "do something unsupported");
 
-    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null);
+    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null, null);
 
     try std.testing.expectEqual(.end_turn, final.stop_reason);
     try std.testing.expect(history.items[2].content[0].tool_result.is_error);
@@ -153,7 +153,7 @@ test "reports started and finished events around a successful tool call" {
 
     var recorder = RecordingReporter{};
     defer recorder.events.deinit(std.testing.allocator);
-    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter());
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter(), null);
 
     try std.testing.expectEqual(@as(usize, 2), recorder.events.items.len);
 
@@ -193,7 +193,7 @@ test "a failed unknown-tool dispatch emits a not-ok finished event" {
 
     var recorder = RecordingReporter{};
     defer recorder.events.deinit(std.testing.allocator);
-    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter());
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter(), null);
 
     try std.testing.expectEqual(@as(usize, 2), recorder.events.items.len);
     try std.testing.expectEqualStrings("does_not_exist", recorder.events.items[0].started.name);
@@ -201,4 +201,38 @@ test "a failed unknown-tool dispatch emits a not-ok finished event" {
     const finished = recorder.events.items[1].finished;
     try std.testing.expect(!finished.ok);
     try std.testing.expectEqualStrings("unknown tool", finished.detail);
+}
+
+// Scenario: Given a tool-using turn (two API requests: tool_use then
+// end_turn) where each response carries usage, when the loop runs with a
+// totals accumulator, then EVERY request's tokens are counted — not just
+// the final one.
+test "totals accumulate across every request in a multi-request turn" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "greeting.txt", .data = "hello from file" });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const policy = sandbox.SecurityPolicy{ .workspace_root = workspaceRootOf(tmp.dir, &root_buf) };
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var transport = SequencedTransport{ .responses = &.{
+        .{ .status = 200, .body =
+        \\{"content":[{"type":"tool_use","id":"call_1","name":"file_read","input":{"path":"greeting.txt"}}],"stop_reason":"tool_use","usage":{"input_tokens":100,"output_tokens":10}}
+        },
+        .{ .status = 200, .body = "{\"content\":[{\"type\":\"text\",\"text\":\"done reading\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":250,\"output_tokens\":15}}" },
+    } };
+    const p = anthropic.AnthropicProvider{ .transport = transport.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
+
+    var history = try oneUserMessage(a, "read greeting.txt");
+
+    var totals: opennull.agent.usage.UsageTotals = .{};
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null, &totals);
+
+    try std.testing.expectEqual(@as(u32, 2), totals.requests);
+    try std.testing.expectEqual(@as(u64, 350), totals.input_tokens);
+    try std.testing.expectEqual(@as(u64, 25), totals.output_tokens);
 }

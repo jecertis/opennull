@@ -182,5 +182,30 @@ fn parseResponseBody(allocator: std.mem.Allocator, body: []const u8) !provider.C
     else
         .other;
 
-    return provider.ChatResponse{ .content = blocks, .stop_reason = stop_reason, ._raw = parsed };
+    return provider.ChatResponse{
+        .content = blocks,
+        .stop_reason = stop_reason,
+        .usage = parseUsage(root_obj),
+        ._raw = parsed,
+    };
+}
+
+/// Anthropic wire shape: "usage": {"input_tokens": N, "output_tokens": M}.
+/// Absent or malformed usage simply yields null — accounting is optional.
+fn parseUsage(root_obj: std.json.ObjectMap) ?provider.Usage {
+    const usage_val = root_obj.get("usage") orelse return null;
+    const usage_obj = switch (usage_val) {
+        .object => |o| o,
+        else => return null,
+    };
+    const in_tok = switch (usage_obj.get("input_tokens") orelse return null) {
+        .integer => |n| n,
+        else => return null,
+    };
+    const out_tok = switch (usage_obj.get("output_tokens") orelse return null) {
+        .integer => |n| n,
+        else => return null,
+    };
+    if (in_tok < 0 or out_tok < 0) return null;
+    return .{ .input_tokens = @intCast(in_tok), .output_tokens = @intCast(out_tok) };
 }

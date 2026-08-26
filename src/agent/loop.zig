@@ -5,6 +5,7 @@ const std = @import("std");
 const provider = @import("../provider/provider.zig");
 const registry = @import("../tools/registry.zig");
 const sandbox = @import("../security/sandbox.zig");
+const usage_mod = @import("usage.zig");
 
 pub const History = std.ArrayListUnmanaged(provider.Message);
 
@@ -32,6 +33,10 @@ pub const Reporter = struct {
 /// ChatResponse, whose own parsed-JSON arena is chained off `allocator`) —
 /// the caller's `arena.deinit()` reclaims everything transitively in one
 /// shot. Never call `.deinit()` on the returned ChatResponse yourself.
+///
+/// `totals`, when given, accumulates the usage of EVERY request made inside
+/// the loop — a tool-using turn may hit the API several times, and each
+/// request bills tokens.
 pub fn runTurn(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -40,6 +45,7 @@ pub fn runTurn(
     history: *History,
     model: []const u8,
     reporter: ?Reporter,
+    totals: ?*usage_mod.UsageTotals,
 ) !provider.ChatResponse {
     while (true) {
         const specs = try registry.buildSpecs(allocator);
@@ -50,6 +56,9 @@ pub fn runTurn(
             .tools = specs,
         });
 
+        if (resp.usage) |u| {
+            if (totals) |t| t.add(u);
+        }
         try history.append(allocator, .{ .role = .assistant, .content = resp.content });
 
         if (resp.stop_reason != .tool_use) {

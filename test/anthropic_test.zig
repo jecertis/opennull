@@ -132,3 +132,33 @@ test "non-200 status surfaces as an error" {
     const result = p.chat(std.testing.allocator, .{ .model = "claude-sonnet-5", .messages = &messages });
     try std.testing.expectError(error.ApiError, result);
 }
+
+// Scenario: Given a response whose body carries an Anthropic usage block,
+// when parsed, then the neutral ChatResponse exposes input/output tokens.
+test "parses usage tokens from a response" {
+    const scripted = ScriptedTransport{
+        .status = 200,
+        .body = "{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":120,\"output_tokens\":7}}",
+    };
+    const p = anthropic.AnthropicProvider{ .transport = scripted.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
+    const messages = oneUserMessage("hi");
+    var resp = try p.chat(std.testing.allocator, .{ .model = "m", .messages = &messages });
+    defer resp.deinit();
+    const u = resp.usage.?;
+    try std.testing.expectEqual(@as(u32, 120), u.input_tokens);
+    try std.testing.expectEqual(@as(u32, 7), u.output_tokens);
+}
+
+// Scenario: Given a response with NO usage block, when parsed, then usage
+// is null — accounting stays optional and never breaks parsing.
+test "absent usage block parses as null" {
+    const scripted = ScriptedTransport{
+        .status = 200,
+        .body = "{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"stop_reason\":\"end_turn\"}",
+    };
+    const p = anthropic.AnthropicProvider{ .transport = scripted.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
+    const messages = oneUserMessage("hi");
+    var resp = try p.chat(std.testing.allocator, .{ .model = "m", .messages = &messages });
+    defer resp.deinit();
+    try std.testing.expectEqual(@as(?provider.Usage, null), resp.usage);
+}

@@ -242,6 +242,27 @@ fn parseResponseBody(allocator: std.mem.Allocator, body: []const u8) !provider.C
     return provider.ChatResponse{
         .content = try blocks.toOwnedSlice(arena_alloc),
         .stop_reason = stop_reason,
+        .usage = parseUsage(root_obj),
         ._raw = parsed,
     };
+}
+
+/// OpenAI wire shape: "usage": {"prompt_tokens": N, "completion_tokens": M}.
+/// Absent or malformed usage simply yields null — accounting is optional.
+fn parseUsage(root_obj: std.json.ObjectMap) ?provider.Usage {
+    const usage_val = root_obj.get("usage") orelse return null;
+    const usage_obj = switch (usage_val) {
+        .object => |o| o,
+        else => return null,
+    };
+    const prompt_tok = switch (usage_obj.get("prompt_tokens") orelse return null) {
+        .integer => |n| n,
+        else => return null,
+    };
+    const completion_tok = switch (usage_obj.get("completion_tokens") orelse return null) {
+        .integer => |n| n,
+        else => return null,
+    };
+    if (prompt_tok < 0 or completion_tok < 0) return null;
+    return .{ .input_tokens = @intCast(prompt_tok), .output_tokens = @intCast(completion_tok) };
 }

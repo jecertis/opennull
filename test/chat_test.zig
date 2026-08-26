@@ -106,3 +106,37 @@ test "formatToolFinished renders only the first detail line on failure" {
     defer std.testing.allocator.free(line);
     try std.testing.expectEqualStrings("[tool] file_edit failed: old_string not found", line);
 }
+
+// -- token/cost line formatting -----------------------------------------
+
+// Scenario: Given turn deltas and session totals, when formatted, then the
+// line shows both, with no cost section when pricing is unavailable.
+test "formatTokensLine renders turn and session totals without cost" {
+    const totals: opennull.agent.usage.UsageTotals = .{
+        .requests = 3,
+        .input_tokens = 4567,
+        .output_tokens = 890,
+    };
+    const line = try chat.formatTokensLine(std.testing.allocator, 1234, 567, totals, null);
+    defer std.testing.allocator.free(line);
+    try std.testing.expectEqualStrings(
+        "tokens> 1234 in / 567 out this turn | session 4567 in / 890 out",
+        line,
+    );
+}
+
+// Scenario: Given a computed session cost, when formatted, then it is
+// appended as a dollar amount with 4-decimal precision.
+test "formatTokensLine appends the cost when priced" {
+    const totals: opennull.agent.usage.UsageTotals = .{
+        .requests = 1,
+        .input_tokens = 100,
+        .output_tokens = 50,
+    };
+    const line = try chat.formatTokensLine(std.testing.allocator, 100, 50, totals, 0.0125);
+    defer std.testing.allocator.free(line);
+    try std.testing.expectEqualStrings(
+        "tokens> 100 in / 50 out this turn | session 100 in / 50 out | $0.0125",
+        line,
+    );
+}

@@ -6,10 +6,12 @@ const std = @import("std");
 const sandbox = @import("../security/sandbox.zig");
 const provider = @import("../provider/provider.zig");
 const loop = @import("loop.zig");
+const usage_mod = @import("usage.zig");
 
 /// Re-exported so CLI/TUI layers can talk about "a session's history"
 /// without importing the loop module directly.
 pub const History = loop.History;
+pub const UsageTotals = usage_mod.UsageTotals;
 
 /// Sends one user prompt as part of an ongoing session and returns the
 /// assistant's final reply text (concatenated text blocks).
@@ -28,6 +30,7 @@ pub fn sendPrompt(
     model: []const u8,
     prompt: []const u8,
     reporter: ?loop.Reporter,
+    totals: ?*usage_mod.UsageTotals,
 ) ![]u8 {
     // Deep-copy the prompt text: callers hand us transient buffers (e.g. a
     // stdin reader's internal buffer that the next read invalidates), while
@@ -36,7 +39,7 @@ pub fn sendPrompt(
     blocks[0] = .{ .text = try allocator.dupe(u8, prompt) };
     try history.append(allocator, .{ .role = .user, .content = blocks });
 
-    const resp = try loop.runTurn(allocator, io, prov, policy, history, model, reporter);
+    const resp = try loop.runTurn(allocator, io, prov, policy, history, model, reporter, totals);
 
     // Copies bytes out into a fresh allocation, so it survives regardless
     // of the response arena that history now references. Deliberately do
