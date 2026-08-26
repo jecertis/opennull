@@ -91,10 +91,16 @@ pub fn bootstrap(
         else => return err,
     }
 
-    const toml_contents = try std.Io.Dir.cwd().readFileAlloc(io, "config.toml", allocator, .limited(max_config_bytes));
-    defer allocator.free(toml_contents);
-
-    var cfg = try config_mod.load(allocator, toml_contents, &dotenv_map, environ_map);
+    // No config.toml means zero-config defaults; other read errors are real.
+    var cfg = blk: {
+        if (std.Io.Dir.cwd().readFileAlloc(io, "config.toml", allocator, .limited(max_config_bytes))) |contents| {
+            defer allocator.free(contents);
+            break :blk try config_mod.load(allocator, contents, &dotenv_map, environ_map);
+        } else |err| switch (err) {
+            error.FileNotFound => break :blk try buildDefaultConfig(allocator, environ_map),
+            else => return err,
+        }
+    };
     errdefer cfg.deinit();
 
     // Open "." to get a real directory handle: on macOS, realPath resolves
@@ -128,12 +134,72 @@ pub fn bootstrap(
     };
 }
 
+/// The config used when no config.toml exists: a fallback chain across
+/// providers — whichever API key is present wins (Anthropic first), and
+/// local Ollama is always available as the free last resort, so the binary
+/// works out of the box with zero keys if Ollama is running. Pure; tested
+/// in test/bootstrap_test.zig.
+pub fn buildDefaultConfig(
+    allocator: std.mem.Allocator,
+    process_env: *const std.process.Environ.Map,
+) config_mod.LoadError!config_mod.Config {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const a = arena.allocator();
+
+    // Priority order: paid-key first (existing users keep their setup),
+    // then free-tier keys, then local. model ids are the long-standing
+    // stable names per endpoint; override via config.toml when needed.
+    const candidates = [_]struct { env: ?[]const u8, name: []const u8, kind: []const u8, base_url: []const u8, model: []const u8 }{
+        .{ .env = "ANTHROPIC_API_KEY", .name = "anthropic", .kind = "anthropic", .base_url = "https://api.anthropic.com", .model = "claude-sonnet-5" },
+        .{ .env = "GROQ_API_KEY", .name = "groq", .kind = "openai_compat", .base_url = "https://api.groq.com/openai/v1", .model = "llama-3.1-8b-instant" },
+        .{ .env = "GEMINI_API_KEY", .name = "gemini", .kind = "openai_compat", .base_url = "https://generativelanguage.googleapis.com/v1beta/openai", .model = "gemini-2.0-flash" },
+        .{ .env = "OPENROUTER_API_KEY", .name = "openrouter", .kind = "openai_compat", .base_url = "https://openrouter.ai/api/v1", .model = "meta-llama/llama-3.3-70b-instruct:free" },
+        // Always registered: free, local, no key. Ignored auth header is
+        // harmless for Ollama.
+        .{ .env = null, .name = "ollama", .kind = "openai_compat", .base_url = "http://localhost:11434/v1", .model = "llama3.2" },
+    };
+
+    var providers: std.ArrayListUnmanaged(config_mod.ProviderConfig) = .empty;
+    var routes: std.ArrayListUnmanaged(config_mod.RouteConfig) = .empty;
+
+    for (candidates) |c| {
+        const key: []const u8 = if (c.env) |env|
+            process_env.get(env) orelse continue
+        else
+            ""; // local servers need no auth
+        try providers.append(a, .{
+            .name = c.name,
+            .kind = c.kind,
+            .base_url = c.base_url,
+            .api_key = try a.dupe(u8, key),
+        });
+        try routes.append(a, .{
+            .hint = c.name, // e.g. hint "groq" picks groq explicitly
+            .provider = c.name,
+            .model = c.model,
+            .tool_calling = true,
+            .vision = false,
+        });
+    }
+
+    return .{
+        .arena = arena,
+        .default_hint = routes.items[0].hint,
+        .system_prompt = null,
+        .providers = try providers.toOwnedSlice(a),
+        .routes = try routes.toOwnedSlice(a),
+        .pricing = &.{},
+        .sandbox_allow = &.{},
+    };
+}
+
 /// Human-readable explanation for a bootstrap error. Pure; the caller still
 /// prints the underlying error tag alongside for debuggability.
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
         error.FileNotFound => "no config.toml found in the current directory",
-        error.MissingApiKeyEnv => "a configured provider's api_key_env variable is set neither in the process environment nor in .env",
+        error.MissingApiKeyEnv => "no provider is usable: export ANTHROPIC_API_KEY / GROQ_API_KEY / GEMINI_API_KEY / OPENROUTER_API_KEY (free tiers exist), or start Ollama locally (`ollama serve`), or write config.toml (see examples/config.toml)",
         error.UnknownHint => "general.default_hint names a route that does not exist in config.toml",
         error.UnknownProvider => "a route references a provider not defined under [providers]",
         error.UnknownProviderKind => "an unsupported provider kind in config.toml",

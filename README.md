@@ -24,12 +24,22 @@ your `$PATH`, or build it yourself below.
 
 ## Quick start
 
+**Zero config**: export any one provider key (free tiers work) and go:
+
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...   # or GROQ_API_KEY / GEMINI_API_KEY /
+opennull chat                         # OPENROUTER_API_KEY (all have free tiers)
+```
+
+No keys at all? Start [Ollama](https://ollama.com) (`ollama serve` + `ollama pull llama3.2`) —
+the zero-config default chain is Anthropic → Groq → Gemini → OpenRouter → local Ollama,
+first available wins.
+
+**Or customize** with `config.toml` (copy from `examples/config.toml`; providers,
+routes/hints, pricing, sandbox allow-list):
+
 ```sh
 cp examples/config.toml config.toml   # then edit providers/routes
-export ANTHROPIC_API_KEY=sk-ant-...   # or put it in .env
-
-opennull run "summarize src/root.zig" # one-shot agent turn (tools included)
-opennull chat                         # multi-turn REPL; /exit or Ctrl-D to quit
 ```
 
 `opennull` looks for `config.toml` and `.env` in the current directory — the
