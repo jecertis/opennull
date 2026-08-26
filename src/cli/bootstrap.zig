@@ -34,6 +34,9 @@ pub const Bootstrapped = struct {
     /// Absolute workspace root (the process's starting directory), resolved
     /// once here so both commands share one definition of "the workspace".
     workspace_root: []const u8,
+    /// System prompt sent with every request: either the config's explicit
+    /// override or the built-in agent charter.
+    system_prompt: []const u8,
     /// Heap-anchored so the transport pointers inside `provider` stay valid
     /// for the lifetime of this value.
     _http_transport: *http.HttpTransport,
@@ -44,9 +47,33 @@ pub const Bootstrapped = struct {
     pub fn deinit(self: *Bootstrapped) void {
         self.config.deinit();
         self._allocator.free(self.workspace_root);
+        self._allocator.free(self.system_prompt);
         self._allocator.destroy(self._http_transport);
     }
 };
+
+/// The default charter when config.toml does not set one. Tells the model
+/// what it is, where it works, and that its tools act on REAL files —
+/// without this, models narrate actions instead of taking them. Pure;
+/// tested in test/bootstrap_test.zig.
+pub fn buildSystemPrompt(
+    allocator: std.mem.Allocator,
+    workspace_root: []const u8,
+    override: ?[]const u8,
+) std.mem.Allocator.Error![]u8 {
+    if (override) |o| return allocator.dupe(u8, o);
+    return std.fmt.allocPrint(allocator,
+        \\You are opennull, a coding agent working inside a sandboxed workspace.
+        \\
+        \\Workspace root: {s}
+        \\
+        \\You have real file tools: file_read, file_write, file_edit. Use them to
+        \\inspect and change actual files instead of describing what you would do.
+        \\Tool paths are relative to the workspace root; requests outside it fail
+        \\unless the configuration explicitly allows them. Keep replies short and
+        \\concrete, and report what you actually did.
+    , .{workspace_root});
+}
 
 pub fn bootstrap(
     allocator: std.mem.Allocator,
@@ -84,12 +111,16 @@ pub fn bootstrap(
 
     const selected = try router.select(&cfg, cfg.default_hint);
 
+    const system_prompt = try buildSystemPrompt(allocator, workspace_root, cfg.system_prompt);
+    errdefer allocator.free(system_prompt);
+
     const t = try allocator.create(http.HttpTransport);
     t.* = .{ .allocator = allocator, .io = io };
 
     return .{
         .config = cfg,
         .workspace_root = workspace_root,
+        .system_prompt = system_prompt,
         ._http_transport = t,
         ._allocator = allocator,
         .provider = try router.build(&cfg, selected, t.transport()),

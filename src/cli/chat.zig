@@ -95,6 +95,7 @@ pub fn execute(
                     text,
                     activity_reporter.reporter(),
                     &totals,
+                    boot.system_prompt,
                 ) catch |err| {
                     // Stay in the session: a failed request must not lose
                     // the conversation already accumulated.

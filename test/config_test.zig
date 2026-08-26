@@ -160,3 +160,35 @@ test "route referencing an unknown provider is rejected" {
     const result = config.load(std.testing.allocator, bad_toml, &dmap, &penv);
     try std.testing.expectError(error.UnknownProviderInRoute, result);
 }
+
+// Scenario: Given [general] with a system_prompt string, when loaded, then
+// it surfaces on the config for the bootstrap layer to use.
+test "parses an optional system_prompt from general" {
+    var dmap = try dotenv.parse(std.testing.allocator, "");
+    defer dmap.deinit(std.testing.allocator);
+    var penv = emptyEnv(std.testing.allocator);
+    defer penv.deinit();
+
+    const standalone =
+        \\[general]
+        \\default_hint = "default"
+        \\system_prompt = "custom charter"
+        \\
+    ;
+    var cfg = try config.load(std.testing.allocator, standalone, &dmap, &penv);
+    defer cfg.deinit();
+    try std.testing.expectEqualStrings("custom charter", cfg.system_prompt.?);
+}
+
+// Scenario: Given a config without system_prompt, when loaded, then the
+// field is null (the caller's built-in charter applies).
+test "absent system_prompt loads as null" {
+    var dmap = try dotenv.parse(std.testing.allocator, "ANTHROPIC_API_KEY=sk-ant-from-dotenv\n");
+    defer dmap.deinit(std.testing.allocator);
+    var penv = emptyEnv(std.testing.allocator);
+    defer penv.deinit();
+
+    var cfg = try config.load(std.testing.allocator, example_toml, &dmap, &penv);
+    defer cfg.deinit();
+    try std.testing.expectEqual(@as(?[]const u8, null), cfg.system_prompt);
+}

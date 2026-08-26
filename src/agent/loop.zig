@@ -46,12 +46,14 @@ pub fn runTurn(
     model: []const u8,
     reporter: ?Reporter,
     totals: ?*usage_mod.UsageTotals,
+    system: ?[]const u8,
 ) !provider.ChatResponse {
     while (true) {
         const specs = try registry.buildSpecs(allocator);
 
         const resp = try prov.chat(allocator, .{
             .model = model,
+            .system = system,
             .messages = history.items,
             .tools = specs,
         });

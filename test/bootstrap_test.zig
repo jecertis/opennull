@@ -35,3 +35,23 @@ test "unexpected errors fall back to a generic message" {
     const msg = bootstrap.errorMessage(error.ConnectionRefused);
     try std.testing.expect(msg.len > 0);
 }
+
+// Scenario: Given no config override, when the system prompt is built, then
+// it embeds the workspace root and names every registry tool so the model
+// knows what it can actually do.
+test "default charter embeds workspace root and tool names" {
+    const prompt = try bootstrap.buildSystemPrompt(std.testing.allocator, "/work/ws", null);
+    defer std.testing.allocator.free(prompt);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "/work/ws") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "file_read") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "file_write") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "file_edit") != null);
+}
+
+// Scenario: Given an explicit config override, when built, then it is used
+// verbatim — no default text appended, no workspace root injected.
+test "config override replaces the default charter verbatim" {
+    const prompt = try bootstrap.buildSystemPrompt(std.testing.allocator, "/work/ws", "be terse");
+    defer std.testing.allocator.free(prompt);
+    try std.testing.expectEqualStrings("be terse", prompt);
+}

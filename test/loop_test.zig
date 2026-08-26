@@ -69,7 +69,7 @@ test "executes a requested tool and continues to the final answer" {
 
     var history = try oneUserMessage(a, "read greeting.txt");
 
-    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null, null);
+    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null, null, null);
 
     try std.testing.expectEqual(.end_turn, final.stop_reason);
     try std.testing.expectEqualStrings("done reading", final.content[0].text);
@@ -104,7 +104,7 @@ test "an unknown tool name produces a failed tool_result instead of crashing" {
 
     var history = try oneUserMessage(a, "do something unsupported");
 
-    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null, null);
+    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null, null, null);
 
     try std.testing.expectEqual(.end_turn, final.stop_reason);
     try std.testing.expect(history.items[2].content[0].tool_result.is_error);
@@ -153,7 +153,7 @@ test "reports started and finished events around a successful tool call" {
 
     var recorder = RecordingReporter{};
     defer recorder.events.deinit(std.testing.allocator);
-    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter(), null);
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter(), null, null);
 
     try std.testing.expectEqual(@as(usize, 2), recorder.events.items.len);
 
@@ -193,7 +193,7 @@ test "a failed unknown-tool dispatch emits a not-ok finished event" {
 
     var recorder = RecordingReporter{};
     defer recorder.events.deinit(std.testing.allocator);
-    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter(), null);
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter(), null, null);
 
     try std.testing.expectEqual(@as(usize, 2), recorder.events.items.len);
     try std.testing.expectEqualStrings("does_not_exist", recorder.events.items[0].started.name);
@@ -230,7 +230,7 @@ test "totals accumulate across every request in a multi-request turn" {
     var history = try oneUserMessage(a, "read greeting.txt");
 
     var totals: opennull.agent.usage.UsageTotals = .{};
-    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null, &totals);
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null, &totals, null);
 
     try std.testing.expectEqual(@as(u32, 2), totals.requests);
     try std.testing.expectEqual(@as(u64, 350), totals.input_tokens);

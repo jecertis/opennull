@@ -73,6 +73,7 @@ pub fn execute(
         prompt,
         activity_reporter.reporter(),
         &totals,
+        boot.system_prompt,
     ) catch |err| {
         try stdout.print("error: request failed: {t}\n", .{err});
         return;

@@ -36,6 +36,9 @@ pub const LoadError = error{
 pub const Config = struct {
     arena: std.heap.ArenaAllocator,
     default_hint: []const u8,
+    /// Optional [general] system_prompt override; null means the caller's
+    /// built-in default charter applies.
+    system_prompt: ?[]const u8,
     providers: []const ProviderConfig,
     routes: []const RouteConfig,
     pricing: []const PriceEntry,
@@ -65,6 +68,12 @@ pub fn load(
         break :blk try a.dupe(u8, raw);
     };
 
+    const system_prompt = blk: {
+        const general = toml.getTable(doc.root, "general");
+        const raw = if (general) |g| toml.getString(g, "system_prompt") else null;
+        break :blk if (raw) |r| try a.dupe(u8, r) else null;
+    };
+
     const providers = try loadProviders(a, doc.root, dotenv_map, process_env);
     const routes = try loadRoutes(a, doc.root);
     try validateRoutes(routes, providers);
@@ -74,6 +83,7 @@ pub fn load(
     return Config{
         .arena = arena,
         .default_hint = default_hint,
+        .system_prompt = system_prompt,
         .providers = providers,
         .routes = routes,
         .pricing = pricing,

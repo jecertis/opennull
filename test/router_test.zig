@@ -29,6 +29,7 @@ fn fixtureConfig() config_mod.Config {
     return .{
         .arena = undefined, // hand-built fixture owns static slices; never deinit'd
         .default_hint = "default",
+        .system_prompt = null,
         .providers = &.{ primary, fallback },
         .routes = &.{
             .{ .hint = "default", .provider = "primary", .model = "claude-sonnet-5", .tool_calling = true, .vision = false },
