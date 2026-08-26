@@ -1,11 +1,17 @@
 # opennull
 
+> [!WARNING]
+> **Beta software.** This project works end-to-end but is under heavy
+> development: expect breaking changes to the CLI, config format, and
+> behavior between releases, rough edges, and incomplete platform testing.
+> Use it to experiment — not in production.
+
 A minimal agentic coding CLI in Zig: give it a prompt, it reads and edits
 real files inside a sandboxed workspace, routed through whichever LLM
 provider your config selects.
 
-Pre-release software built test-first (every module has BDD-style specs in
-`test/`); requires **Zig 0.16.0**.
+Built test-first (every module has BDD-style specs in `test/`); requires
+**Zig 0.16.0** if building from source.
 
 ## Install
 
@@ -81,6 +87,25 @@ Both stream responses live over SSE (Anthropic and OpenAI-compatible
 endpoints); if a provider/transport cannot stream, they fall back to
 buffered replies automatically.
 
+## Footprint
+
+Deliberately tiny. The entire project is **~6,200 lines of Zig** with
+**zero third-party dependencies** — `build.zig.zon` declares none, every
+import in the codebase is either Zig's stdlib or a local module, there is
+no C code, and the Linux builds are fully static.
+
+| What | Size |
+|---|---|
+| Binary | 1.0–1.3 MB per platform |
+| Release download | ~0.5 MB tarball |
+| Whole source tree (incl. tests) | 61 KB compressed |
+
+For scale: mainstream agent CLIs ship an order of magnitude larger before
+you count their language runtimes — Claude Code's npm package alone is
+tens of MB unpacked (~30 MB in earlier releases, ~70 MB with current
+vendored binaries), and Python-based agents have historically pulled in
+hundreds of MB of dependencies.
+
 ## Architecture
 
 Closed-set tagged unions over dynamic dispatch wherever the set is known at
@@ -102,6 +127,28 @@ test/                     one BDD spec file per module, wired in build.zig
 Testing philosophy: pure logic is fully unit-tested against injected fake
 transports; the few real-I/O seams (`bootstrap`, command `execute`s, HTTP
 `send`) are deliberately untested and exercised by smoke runs instead.
+
+## Status: beta — a lot of plumbing still to do
+
+This is an early, single-maintainer project. What that means concretely:
+
+- **Breaking changes are expected.** CLI flags, `config.toml` keys, and
+  tool behavior may change without notice between versions.
+- **Platform testing is thin.** Only the macOS Intel binary is executed
+  end-to-end before each release; the arm64-macos and Linux builds are
+  cross-compiled and verified by architecture but not run.
+- **No CI yet** — releases are built by hand from a dev machine.
+- **Free-tier model IDs drift.** The zero-config defaults (`llama-3.1-8b-instant`,
+  `:free` variants) track current stable names but providers rotate them;
+  override via `config.toml` when they do.
+- **Security posture is basic**: the sandbox resolves paths lexically (no
+  symlink-following protection), tools are file-only, and there is no
+  shell-execution tooling — which is also why it can't wreck much.
+- Known rough edges: streamed tool calls dispatch only after their
+  arguments finish arriving; REPL exits if one input line exceeds 16 KiB.
+
+Contributions and bug reports welcome — the whole codebase is BDD-tested
+and small enough to read in an afternoon.
 
 ## Limitations
 
