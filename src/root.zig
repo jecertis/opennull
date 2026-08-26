@@ -33,7 +33,7 @@ pub const agent = struct {
     pub const usage = @import("agent/usage.zig");
 };
 
-pub const version = "0.1.0";
+pub const version = "0.1.1";
 
 test {
     std.testing.refAllDecls(@This());
