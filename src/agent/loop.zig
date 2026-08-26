@@ -8,6 +8,24 @@ const sandbox = @import("../security/sandbox.zig");
 
 pub const History = std.ArrayListUnmanaged(provider.Message);
 
+/// One observation about a tool execution inside the turn loop, emitted to
+/// the optional Reporter so UIs (REPL, future TUI) can show live activity.
+pub const ToolActivity = union(enum) {
+    started: struct { name: []const u8, input: std.json.Value },
+    finished: struct { name: []const u8, ok: bool, detail: []const u8 },
+};
+
+/// Context + function-pointer pair (same vtable style as
+/// provider.Transport) — `notify` MUST NOT fail; visibility is best-effort.
+pub const Reporter = struct {
+    ptr: *anyopaque,
+    notifyFn: *const fn (ptr: *anyopaque, activity: ToolActivity) void,
+
+    pub fn notify(self: Reporter, activity: ToolActivity) void {
+        self.notifyFn(self.ptr, activity);
+    }
+};
+
 /// `allocator` MUST be a bulk-reclaim allocator (an arena) owned by the
 /// caller for the whole turn/session: this function does not free any
 /// individual allocation (including intermediate or the returned
@@ -21,6 +39,7 @@ pub fn runTurn(
     policy: *const sandbox.SecurityPolicy,
     history: *History,
     model: []const u8,
+    reporter: ?Reporter,
 ) !provider.ChatResponse {
     while (true) {
         const specs = try registry.buildSpecs(allocator);
@@ -41,6 +60,8 @@ pub fn runTurn(
         for (resp.content) |block| {
             switch (block) {
                 .tool_use => |tu| {
+                    if (reporter) |rep| rep.notify(.{ .started = .{ .name = tu.name, .input = tu.input } });
+
                     var result_content: []const u8 = "unknown tool";
                     var is_err = true;
 
@@ -58,6 +79,12 @@ pub fn runTurn(
                             is_err = true;
                         }
                     }
+
+                    if (reporter) |rep| rep.notify(.{ .finished = .{
+                        .name = tu.name,
+                        .ok = !is_err,
+                        .detail = result_content,
+                    } });
 
                     try results.append(allocator, .{ .tool_result = .{
                         .tool_use_id = tu.id,

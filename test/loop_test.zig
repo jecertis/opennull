@@ -69,7 +69,7 @@ test "executes a requested tool and continues to the final answer" {
 
     var history = try oneUserMessage(a, "read greeting.txt");
 
-    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5");
+    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null);
 
     try std.testing.expectEqual(.end_turn, final.stop_reason);
     try std.testing.expectEqualStrings("done reading", final.content[0].text);
@@ -104,8 +104,101 @@ test "an unknown tool name produces a failed tool_result instead of crashing" {
 
     var history = try oneUserMessage(a, "do something unsupported");
 
-    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5");
+    const final = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", null);
 
     try std.testing.expectEqual(.end_turn, final.stop_reason);
     try std.testing.expect(history.items[2].content[0].tool_result.is_error);
+}
+
+/// Collects every ToolActivity the loop emits, in order. Recorded slices
+/// alias the provider's parsed-JSON arena, which lives as long as the test.
+const RecordingReporter = struct {
+    events: std.ArrayListUnmanaged(loop.ToolActivity) = .empty,
+
+    fn reporter(self: *RecordingReporter) loop.Reporter {
+        return .{ .ptr = self, .notifyFn = notify };
+    }
+
+    fn notify(ptr: *anyopaque, activity: loop.ToolActivity) void {
+        const self: *RecordingReporter = @ptrCast(@alignCast(ptr));
+        self.events.append(std.testing.allocator, activity) catch @panic("OOM recording tool activity");
+    }
+};
+
+// Scenario: Given a scripted turn that requests file_read and then answers,
+// when a recording reporter is attached, then it observes exactly one
+// `started` event carrying the tool's parsed input, followed by one
+// `finished` event marked ok with the tool's real output as detail.
+test "reports started and finished events around a successful tool call" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "greeting.txt", .data = "hello from file" });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const policy = sandbox.SecurityPolicy{ .workspace_root = workspaceRootOf(tmp.dir, &root_buf) };
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var transport = SequencedTransport{ .responses = &.{
+        .{ .status = 200, .body =
+        \\{"content":[{"type":"tool_use","id":"call_1","name":"file_read","input":{"path":"greeting.txt"}}],"stop_reason":"tool_use"}
+        },
+        .{ .status = 200, .body = "{\"content\":[{\"type\":\"text\",\"text\":\"done reading\"}],\"stop_reason\":\"end_turn\"}" },
+    } };
+    const p = anthropic.AnthropicProvider{ .transport = transport.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
+
+    var history = try oneUserMessage(a, "read greeting.txt");
+
+    var recorder = RecordingReporter{};
+    defer recorder.events.deinit(std.testing.allocator);
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter());
+
+    try std.testing.expectEqual(@as(usize, 2), recorder.events.items.len);
+
+    const started = recorder.events.items[0].started;
+    try std.testing.expectEqualStrings("file_read", started.name);
+    try std.testing.expectEqualStrings("greeting.txt", started.input.object.get("path").?.string);
+
+    const finished = recorder.events.items[1].finished;
+    try std.testing.expectEqualStrings("file_read", finished.name);
+    try std.testing.expect(finished.ok);
+    try std.testing.expectEqualStrings("hello from file", finished.detail);
+}
+
+// Scenario: Given a scripted tool_use naming an unregistered tool, when the
+// loop runs with a reporter attached, then the failure is still reported —
+// finished(ok=false) with the loop's own "unknown tool" detail — so UIs can
+// surface the failed attempt instead of silence.
+test "a failed unknown-tool dispatch emits a not-ok finished event" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const policy = sandbox.SecurityPolicy{ .workspace_root = workspaceRootOf(tmp.dir, &root_buf) };
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var transport = SequencedTransport{ .responses = &.{
+        .{ .status = 200, .body =
+        \\{"content":[{"type":"tool_use","id":"call_1","name":"does_not_exist","input":{}}],"stop_reason":"tool_use"}
+        },
+        .{ .status = 200, .body = "{\"content\":[{\"type\":\"text\",\"text\":\"handled\"}],\"stop_reason\":\"end_turn\"}" },
+    } };
+    const p = anthropic.AnthropicProvider{ .transport = transport.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
+
+    var history = try oneUserMessage(a, "do something unsupported");
+
+    var recorder = RecordingReporter{};
+    defer recorder.events.deinit(std.testing.allocator);
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude-sonnet-5", recorder.reporter());
+
+    try std.testing.expectEqual(@as(usize, 2), recorder.events.items.len);
+    try std.testing.expectEqualStrings("does_not_exist", recorder.events.items[0].started.name);
+
+    const finished = recorder.events.items[1].finished;
+    try std.testing.expect(!finished.ok);
+    try std.testing.expectEqualStrings("unknown tool", finished.detail);
 }

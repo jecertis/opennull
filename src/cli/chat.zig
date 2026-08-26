@@ -7,6 +7,7 @@ const provider = @import("../provider/provider.zig");
 const anthropic = @import("../provider/anthropic.zig");
 const http = @import("../provider/http.zig");
 const sandbox = @import("../security/sandbox.zig");
+const loop = @import("../agent/loop.zig");
 const session = @import("../agent/session.zig");
 
 /// Fixed model/endpoint until the router-driven path lands (Phase 5),
@@ -29,6 +30,59 @@ pub fn parseLine(raw: []const u8) ParsedLine {
     if (std.mem.eql(u8, line, "/exit") or std.mem.eql(u8, line, "/quit")) return .exit;
     return .{ .prompt = line };
 }
+
+/// "[tool] file_read {\"path\":\"a.txt\"}" — the tool's name plus its
+/// compact JSON input. Caller frees.
+pub fn formatToolStarted(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    input: std.json.Value,
+) ![]u8 {
+    const input_json = try std.json.Stringify.valueAlloc(allocator, input, .{});
+    defer allocator.free(input_json);
+    return std.fmt.allocPrint(allocator, "[tool] {s} {s}", .{ name, input_json });
+}
+
+/// "[tool] file_read ok" on success; on failure only the FIRST line of the
+/// detail is shown (details can be whole file contents or stack-ish text).
+/// Caller frees.
+pub fn formatToolFinished(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    ok: bool,
+    detail: []const u8,
+) ![]u8 {
+    if (ok) return std.fmt.allocPrint(allocator, "[tool] {s} ok", .{name});
+    const first_line_len = std.mem.indexOfScalar(u8, detail, '\n') orelse detail.len;
+    return std.fmt.allocPrint(allocator, "[tool] {s} failed: {s}", .{ name, detail[0..first_line_len] });
+}
+
+/// Prints tool activity to the REPL's stdout as it happens. Best-effort:
+/// notify never fails and swallows write errors (losing an activity line
+/// must not abort the agent turn).
+const StdoutReporter = struct {
+    allocator: std.mem.Allocator,
+    w: *std.Io.Writer,
+
+    fn reporter(self: *StdoutReporter) loop.Reporter {
+        return .{ .ptr = self, .notifyFn = notify };
+    }
+
+    fn notify(ptr: *anyopaque, activity: loop.ToolActivity) void {
+        const self: *StdoutReporter = @ptrCast(@alignCast(ptr));
+        self.print(activity) catch {};
+    }
+
+    fn print(self: *StdoutReporter, activity: loop.ToolActivity) !void {
+        const line = switch (activity) {
+            .started => |e| try formatToolStarted(self.allocator, e.name, e.input),
+            .finished => |e| try formatToolFinished(self.allocator, e.name, e.ok, e.detail),
+        };
+        defer self.allocator.free(line);
+        try self.w.print("{s}\n", .{line});
+        self.w.flush() catch {}; // show activity immediately, even mid-turn
+    }
+};
 
 /// Reads lines from stdin until EOF or /exit, running a full agent turn
 /// per prompt with the whole-session history retained. One arena backs the
@@ -71,6 +125,8 @@ pub fn execute(
 
     var history: session.History = .empty;
 
+    var activity_reporter = StdoutReporter{ .allocator = allocator, .w = stdout };
+
     try stdout.print(
         "opennull chat — tools enabled, workspace: {s}\n" ++
             "type a prompt, /exit to quit\n",
@@ -106,6 +162,7 @@ pub fn execute(
                     &history,
                     default_model,
                     text,
+                    activity_reporter.reporter(),
                 ) catch |err| {
                     // Stay in the session: a failed request must not lose
                     // the conversation already accumulated.

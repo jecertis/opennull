@@ -27,6 +27,7 @@ pub fn sendPrompt(
     history: *loop.History,
     model: []const u8,
     prompt: []const u8,
+    reporter: ?loop.Reporter,
 ) ![]u8 {
     // Deep-copy the prompt text: callers hand us transient buffers (e.g. a
     // stdin reader's internal buffer that the next read invalidates), while
@@ -35,7 +36,7 @@ pub fn sendPrompt(
     blocks[0] = .{ .text = try allocator.dupe(u8, prompt) };
     try history.append(allocator, .{ .role = .user, .content = blocks });
 
-    const resp = try loop.runTurn(allocator, io, prov, policy, history, model);
+    const resp = try loop.runTurn(allocator, io, prov, policy, history, model, reporter);
 
     // Copies bytes out into a fresh allocation, so it survives regardless
     // of the response arena that history now references. Deliberately do
