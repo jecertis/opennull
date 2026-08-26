@@ -20,7 +20,7 @@ pub const ParsedArgs = union(enum) {
 
 /// `args` excludes the program name, e.g. `["run", "fix the bug"]`.
 pub fn parseArgs(args: []const []const u8) ParsedArgs {
-    if (args.len == 0) return .unknown;
+    if (args.len == 0) return .chat;
     if (std.mem.eql(u8, args[0], "chat")) {
         if (args.len > 1) return .unknown;
         return .chat;

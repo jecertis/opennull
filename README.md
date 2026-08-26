@@ -62,7 +62,7 @@ fully static Linux builds (x86_64 & arm64) and single-file macOS builds
 
 ```sh
 export GROQ_API_KEY=gsk_...    # free tier! or ANTHROPIC_API_KEY, GEMINI_API_KEY,
-opennull chat                  # OPENROUTER_API_KEY — or skip keys entirely:
+opennull                        # OPENROUTER_API_KEY — or skip keys entirely:
 ```
 
 No keys at all? Run [Ollama](https://ollama.com) locally (`ollama serve`,
@@ -81,8 +81,9 @@ sculpt your own providers, routes, hints, pricing table, and sandbox allow-list.
 
 | Command | What it does |
 |---|---|
+| `opennull` | Opens the interactive chat REPL — the default experience. |
 | `opennull run "<prompt>"` | One glorious agent turn — tools fire live, text streams in, then a token/cost receipt prints and it exits like a professional. |
-| `opennull chat` | The same machinery, multi-turn. History persists; blank lines ignored; `/exit`, `/quit`, or Ctrl-D when you're done. |
+| `opennull chat` | Same as bare `opennull` — the same machinery, multi-turn. History persists; blank lines ignored; `/exit`, `/quit`, or Ctrl-D when you're done. |
 
 Both stream over SSE for every supported provider — and if a transport can't
 stream, they quietly fall back without making a scene.

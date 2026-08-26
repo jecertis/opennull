@@ -33,10 +33,10 @@ test "parseArgs reports unknown for an unrecognized subcommand" {
 }
 
 // Scenario: Given no arguments at all, when parsed, then the result is
-// `unknown` (main.zig is responsible for printing usage in that case).
-test "parseArgs reports unknown for no arguments" {
+// `chat` (bare `opennull` launches the interactive REPL by default).
+test "parseArgs defaults to chat for no arguments" {
     const parsed = run.parseArgs(&.{});
-    try std.testing.expectEqual(run.ParsedArgs.unknown, parsed);
+    try std.testing.expectEqual(run.ParsedArgs.chat, parsed);
 }
 
 // Scenario: Given a ChatResponse with only a text block, when the reply

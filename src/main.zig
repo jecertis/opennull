@@ -19,7 +19,8 @@ pub fn main(init: std.process.Init) !void {
         .chat => try chat.execute(allocator, io, init.environ_map, w),
         .missing_prompt => try w.print("usage: opennull run \"<prompt>\"\n", .{}),
         .unknown => try w.print(
-            "opennull v{s}\nusage: opennull run \"<prompt>\"\n" ++
+            "opennull v{s}\nusage: opennull\n" ++
+                "       opennull run \"<prompt>\"\n" ++
                 "       opennull chat\n",
             .{opennull.version},
         ),
