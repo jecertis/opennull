@@ -12,8 +12,10 @@ pub const provider = struct {
     pub const core = @import("provider/provider.zig");
     pub const anthropic = @import("provider/anthropic.zig");
     pub const openai_compat = @import("provider/openai_compat.zig");
+    pub const any = @import("provider/any.zig");
     pub const http = @import("provider/http.zig");
 };
+pub const router = @import("router/router.zig");
 pub const cli = struct {
     pub const run = @import("cli/run.zig");
     pub const chat = @import("cli/chat.zig");

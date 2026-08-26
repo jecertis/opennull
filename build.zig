@@ -64,6 +64,7 @@ pub fn build(b: *std.Build) void {
         "test/loop_test.zig",
         "test/session_test.zig",
         "test/chat_test.zig",
+        "test/router_test.zig",
     };
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_mod_tests.step);
