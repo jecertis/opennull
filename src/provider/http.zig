@@ -106,7 +106,16 @@ pub const HttpStream = struct {
         try self.request.sendBodyComplete(self.owned_body);
 
         var response = try self.request.receiveHead(self.redirect_buffer);
-        if (response.head.status != .ok) return error.ApiError;
+        if (response.head.status != .ok) {
+            // No buffered body on this path (it's the SSE stream itself) —
+            // status code is still far more than the bare `ApiError` tag
+            // this used to leave the caller with.
+            std.debug.print("http stream error: status={d} ({s})\n", .{
+                @intFromEnum(response.head.status),
+                @tagName(response.head.status),
+            });
+            return error.ApiError;
+        }
 
         // Points into this struct's own request state — hence heap anchor.
         self.body_reader = response.reader(self.transfer_buffer);

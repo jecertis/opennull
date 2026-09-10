@@ -33,7 +33,10 @@ pub const OpenAiCompatProvider = struct {
         const resp = try self.transport.send(allocator, .{ .url = url, .headers = &headers, .body = body });
         defer allocator.free(resp.body);
 
-        if (resp.status != 200) return error.ApiError;
+        if (resp.status != 200) {
+            std.debug.print("openai-compat api error: status={d} body={s}\n", .{ resp.status, resp.body });
+            return error.ApiError;
+        }
 
         return parseResponseBody(allocator, resp.body);
     }
