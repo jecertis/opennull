@@ -13,7 +13,6 @@ pub fn main(init: std.process.Init) !void {
     const w = &stdout_file_writer.interface;
 
     const argv = try init.minimal.args.toSlice(allocator);
-    const self_path = argv[0];
     const args = if (argv.len > 1) argv[1..] else argv[0..0];
 
     if (args.len > 0) {
@@ -23,7 +22,7 @@ pub fn main(init: std.process.Init) !void {
             return;
         }
         if (std.mem.eql(u8, args[0], "upgrade")) {
-            try upgrade.execute(allocator, io, args[1..], self_path, w);
+            try upgrade.execute(allocator, io, args[1..], w);
             try w.flush();
             return;
         }

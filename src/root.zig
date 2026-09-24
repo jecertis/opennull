@@ -38,4 +38,7 @@ pub const version = "0.1.2";
 
 test {
     std.testing.refAllDecls(@This());
+    // refAllDecls does not descend into the namespace structs above, so
+    // files with in-source tests are referenced explicitly.
+    _ = cli.upgrade;
 }
