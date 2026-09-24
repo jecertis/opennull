@@ -62,14 +62,27 @@ pub fn formatToolFinished(
     return std.fmt.allocPrint(allocator, "[tool] {s} failed: {s}", .{ name, detail[0..first_line_len] });
 }
 
+/// "[approval] file_write {\"path\":\"a.txt\",...}". Caller frees.
+pub fn formatApprovalRequested(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    input: std.json.Value,
+) ![]u8 {
+    const input_json = try std.json.Stringify.valueAlloc(allocator, input, .{});
+    defer allocator.free(input_json);
+    return std.fmt.allocPrint(allocator, "[approval] {s} {s}", .{ name, input_json });
+}
+
 /// "tokens> <in> in / <out> out this turn | session <in> in / <out> out"
-/// plus, when the model has a pricing entry, " | $<cost>". Caller frees.
+/// plus, when any turn was priced, " | $<session cost>". Caller frees.
 pub fn formatTokensLine(
     allocator: std.mem.Allocator,
     turn_in: u64,
     turn_out: u64,
     totals: usage_mod.UsageTotals,
     cost: ?f64,
+    /// The cost leaves out turns whose model has no pricing entry.
+    cost_partial: bool,
 ) ![]u8 {
     const base = try std.fmt.allocPrint(
         allocator,
@@ -78,7 +91,7 @@ pub fn formatTokensLine(
     );
     const c = cost orelse return base;
     defer allocator.free(base);
-    return std.fmt.allocPrint(allocator, "{s} | ${d:.4}", .{ base, c });
+    return std.fmt.allocPrint(allocator, "{s} | ${d:.4}{s}", .{ base, c, if (cost_partial) " (some turns unpriced)" else "" });
 }
 
 /// Prints tool activity to a Writer as it happens. Best-effort: notify
@@ -100,6 +113,7 @@ pub const StdoutReporter = struct {
     fn print(self: *StdoutReporter, activity: loop.ToolActivity) !void {
         const line = switch (activity) {
             .started => |e| try formatToolStarted(self.allocator, e.name, e.input),
+            .approval_requested => |e| try formatApprovalRequested(self.allocator, e.name, e.input),
             .finished => |e| try formatToolFinished(self.allocator, e.name, e.ok, e.detail),
         };
         defer self.allocator.free(line);

@@ -60,3 +60,11 @@ test "parseArgs rejects extra arguments after chat" {
     const args = [_][]const u8{ "chat", "--flaggy" };
     try std.testing.expectEqual(run.ParsedArgs.unknown, run.parseArgs(&args));
 }
+
+// Scenario: Given "/fast" or "/powerful", when parsed, then it is a route
+// override for redoing the previous prompt, not a prompt itself.
+test "parseLine recognizes /fast and /powerful overrides" {
+    try std.testing.expectEqual(opennull.router.PromptHint.fast, chat.parseLine("/fast").override);
+    try std.testing.expectEqual(opennull.router.PromptHint.powerful, chat.parseLine(" /powerful\r").override);
+    try std.testing.expectEqualStrings("/fastest thing", chat.parseLine("/fastest thing").prompt);
+}

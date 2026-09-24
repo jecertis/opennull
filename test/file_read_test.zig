@@ -115,3 +115,23 @@ test "spec declares path as a required string parameter" {
     try std.testing.expectEqual(@as(usize, 1), required.len);
     try std.testing.expectEqualStrings("path", required[0].string);
 }
+
+// Scenario: Given a file larger than the read limit, when file_read is
+// called, then it declines with a message pointing at grep rather than
+// returning the whole file.
+test "file_read declines files over the size limit" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const big = try std.testing.allocator.alloc(u8, opennull.tools.file_read.max_bytes + 1);
+    defer std.testing.allocator.free(big);
+    @memset(big, 'a');
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "big.txt", .data = big });
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const policy = sandbox.SecurityPolicy{ .workspace_root = workspaceRootOf(tmp.dir, &root_buf) };
+
+    const args = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, "{\"path\":\"big.txt\"}", .{});
+    defer args.deinit();
+    const result = try (tool.Tool{ .file_read = .{} }).execute(std.testing.allocator, std.testing.io, &policy, args.value);
+    try std.testing.expect(!result.success);
+    try std.testing.expect(std.mem.indexOf(u8, result.err.?, "use grep") != null);
+}

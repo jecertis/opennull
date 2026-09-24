@@ -27,6 +27,25 @@ pub const PriceEntry = struct {
     flat: ?f64,
 };
 
+/// Optional named routes for the deterministic harness router. Missing or
+/// stale names deliberately fall back to general.default_hint at selection
+/// time, preserving single-route and zero-config installations.
+pub const HarnessConfig = struct {
+    fast_hint: ?[]const u8 = null,
+    powerful_hint: ?[]const u8 = null,
+    /// Optional LinearOne n-gram model (.l1ng) that replaces the keyword
+    /// rules. Unset, unreadable or invalid means the keyword router.
+    router_model: ?[]const u8 = null,
+};
+
+/// Local decision/outcome log (LinearOne event format v1). Off unless the
+/// user opts in; nothing leaves the machine. `record_text` additionally
+/// stores the classified input, which training needs.
+pub const TelemetryConfig = struct {
+    local_events: bool = false,
+    record_text: bool = false,
+};
+
 pub const LoadError = error{
     MissingApiKeyEnv,
     UnknownProviderInRoute,
@@ -43,6 +62,8 @@ pub const Config = struct {
     routes: []const RouteConfig,
     pricing: []const PriceEntry,
     sandbox_allow: []const []const u8,
+    harness: HarnessConfig,
+    telemetry: TelemetryConfig = .{},
 
     pub fn deinit(self: *Config) void {
         self.arena.deinit();
@@ -79,6 +100,8 @@ pub fn load(
     try validateRoutes(routes, providers);
     const pricing = try loadPricing(a, doc.root);
     const sandbox_allow = try loadSandboxAllow(a, doc.root);
+    const harness = try loadHarness(a, doc.root);
+    const telemetry = loadTelemetry(doc.root);
 
     return Config{
         .arena = arena,
@@ -88,6 +111,28 @@ pub fn load(
         .routes = routes,
         .pricing = pricing,
         .sandbox_allow = sandbox_allow,
+        .harness = harness,
+        .telemetry = telemetry,
+    };
+}
+
+fn loadTelemetry(root: *toml.Table) TelemetryConfig {
+    const t = toml.getTable(root, "telemetry") orelse return .{};
+    return .{
+        .local_events = toml.getBool(t, "local_events") orelse false,
+        .record_text = toml.getBool(t, "record_text") orelse false,
+    };
+}
+
+fn loadHarness(a: std.mem.Allocator, root: *toml.Table) !HarnessConfig {
+    const t = toml.getTable(root, "harness") orelse return .{};
+    const fast = toml.getString(t, "fast_hint");
+    const powerful = toml.getString(t, "powerful_hint");
+    const model = toml.getString(t, "router_model");
+    return .{
+        .fast_hint = if (fast) |v| try a.dupe(u8, v) else null,
+        .powerful_hint = if (powerful) |v| try a.dupe(u8, v) else null,
+        .router_model = if (model) |v| try a.dupe(u8, v) else null,
     };
 }
 

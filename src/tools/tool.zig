@@ -9,6 +9,8 @@ const provider = @import("../provider/provider.zig");
 const file_read = @import("file_read.zig");
 const file_write = @import("file_write.zig");
 const file_edit = @import("file_edit.zig");
+const list_dir = @import("list_dir.zig");
+const grep = @import("grep.zig");
 
 pub const ToolResult = struct {
     success: bool,
@@ -26,12 +28,16 @@ pub const ToolTag = enum {
     file_read,
     file_write,
     file_edit,
+    list_dir,
+    grep,
 };
 
 pub const Tool = union(ToolTag) {
     file_read: file_read.FileReadTool,
     file_write: file_write.FileWriteTool,
     file_edit: file_edit.FileEditTool,
+    list_dir: list_dir.ListDirTool,
+    grep: grep.GrepTool,
 
     /// The dispatch/LLM-facing name, derived directly from the active tag
     /// so it can never drift from what registry.find() matches against.

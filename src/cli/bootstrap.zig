@@ -1,9 +1,7 @@
 //! Shared CLI startup: reads the optional `.env` and the required
 //! `config.toml` from the working directory, resolves provider api keys
-//! (process env wins over .env), selects the route named by
-//! `general.default_hint`, and constructs the concrete provider behind
-//! AnyProvider. This replaces cli/run.zig's and cli/chat.zig's interim
-//! hardcoded Anthropic path (the plan's Phase 5).
+//! (process env wins over .env), and retains routing configuration plus a
+//! shared HTTP transport for per-prompt route selection.
 //!
 //! `bootstrap` itself is a thin, deliberately untested seam — real file and
 //! env I/O, same policy as the command execute() functions; everything it
@@ -37,14 +35,18 @@ pub const Bootstrapped = struct {
     /// System prompt sent with every request: either the config's explicit
     /// override or the built-in agent charter.
     system_prompt: []const u8,
-    /// Heap-anchored so the transport pointers inside `provider` stay valid
-    /// for the lifetime of this value.
+    /// Heap-anchored transport used to build each prompt's provider.
     _http_transport: *http.HttpTransport,
     _allocator: std.mem.Allocator,
-    provider: any_mod.AnyProvider,
-    model: []const u8,
+    /// Loaded `[harness] router_model`, if set and valid.
+    router_model: ?router.RouterModel = null,
+    _router_model_bytes: ?[]u8 = null,
+    /// Why a configured router_model is not in use (the keyword router is).
+    router_model_error: ?anyerror = null,
 
     pub fn deinit(self: *Bootstrapped) void {
+        if (self.router_model) |*m| m.deinit(self._allocator);
+        if (self._router_model_bytes) |b| self._allocator.free(b);
         self.config.deinit();
         self._allocator.free(self.workspace_root);
         self._allocator.free(self.system_prompt);
@@ -67,8 +69,10 @@ pub fn buildSystemPrompt(
         \\
         \\Workspace root: {s}
         \\
-        \\You have real file tools: file_read, file_write, file_edit. Use them to
-        \\inspect and change actual files instead of describing what you would do.
+        \\You have real file tools: list_dir and grep to find files, file_read to
+        \\read them, file_write and file_edit to change them (the user approves
+        \\each change). Use them to inspect and change actual files instead of
+        \\describing what you would do.
         \\Tool paths are relative to the workspace root; requests outside it fail
         \\unless the configuration explicitly allows them. Keep replies short and
         \\concrete, and report what you actually did.
@@ -115,7 +119,9 @@ pub fn bootstrap(
     const workspace_root = try allocator.dupe(u8, root_buf[0..cwd_len]);
     errdefer allocator.free(workspace_root);
 
-    const selected = try router.select(&cfg, cfg.default_hint);
+    // Preserve the established startup error for a misspelled default route;
+    // harness-specific hints are intentionally softer and fall back later.
+    _ = try router.select(&cfg, cfg.default_hint);
 
     const system_prompt = try buildSystemPrompt(allocator, workspace_root, cfg.system_prompt);
     errdefer allocator.free(system_prompt);
@@ -123,15 +129,62 @@ pub fn bootstrap(
     const t = try allocator.create(http.HttpTransport);
     t.* = .{ .allocator = allocator, .io = io };
 
-    return .{
+    var boot: Bootstrapped = .{
         .config = cfg,
         .workspace_root = workspace_root,
         .system_prompt = system_prompt,
         ._http_transport = t,
         ._allocator = allocator,
-        .provider = try router.build(&cfg, selected, t.transport()),
-        .model = selected.model,
     };
+    if (cfg.harness.router_model) |path| loadRouterModel(&boot, io, path);
+    return boot;
+}
+
+/// Largest router model we will read.
+const max_router_model_bytes: usize = 16 << 20;
+
+/// Soft by design: any failure leaves the keyword router in charge and
+/// records why, for the command to show.
+fn loadRouterModel(boot: *Bootstrapped, io: std.Io, path: []const u8) void {
+    const a = boot._allocator;
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(max_router_model_bytes)) catch |err| {
+        boot.router_model_error = err;
+        return;
+    };
+    const model = router.RouterModel.init(a, bytes) catch |err| {
+        a.free(bytes);
+        boot.router_model_error = err;
+        return;
+    };
+    boot._router_model_bytes = bytes;
+    boot.router_model = model;
+}
+
+/// The routing decision for one prompt, from the loaded model or the
+/// keyword rules.
+pub fn classify(self: *const Bootstrapped, prompt: []const u8) router.Classified {
+    const model: ?*const router.RouterModel = if (self.router_model) |*m| m else null;
+    return router.classify(model, self._allocator, prompt);
+}
+
+/// One line for the user about which router is active, or null for the
+/// plain keyword default. Caller frees.
+pub fn routerStatus(self: *const Bootstrapped, allocator: std.mem.Allocator) !?[]u8 {
+    const path = self.config.harness.router_model orelse return null;
+    if (self.router_model) |*m| return try std.fmt.allocPrint(allocator, "router> {s} ({s})", .{ m.model.engine(), path });
+    return try std.fmt.allocPrint(allocator, "warning: router_model {s} not used ({t}); using the keyword router", .{ path, self.router_model_error.? });
+}
+
+pub fn routeForPrompt(self: *const Bootstrapped, prompt: []const u8) router.Selected {
+    return router.selectForPrompt(&self.config, prompt);
+}
+
+pub fn routeForHint(self: *const Bootstrapped, hint: router.PromptHint) router.Selected {
+    return router.selectForHint(&self.config, hint);
+}
+
+pub fn providerFor(self: *const Bootstrapped, selected: router.Selected) router.BuildError!any_mod.AnyProvider {
+    return router.build(&self.config, selected, self._http_transport.transport());
 }
 
 /// The config used when no config.toml exists: a fallback chain across
@@ -191,6 +244,7 @@ pub fn buildDefaultConfig(
         .routes = try routes.toOwnedSlice(a),
         .pricing = &.{},
         .sandbox_allow = &.{},
+        .harness = .{},
     };
 }
 

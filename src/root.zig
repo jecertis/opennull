@@ -17,19 +17,27 @@ pub const provider = struct {
     pub const sse = @import("provider/sse.zig");
 };
 pub const router = @import("router/router.zig");
+pub const router_ngram = @import("router/ngram.zig");
 pub const cli = struct {
     pub const run = @import("cli/run.zig");
     pub const chat = @import("cli/chat.zig");
     pub const bootstrap = @import("cli/bootstrap.zig");
     pub const display = @import("cli/display.zig");
+    pub const approval = @import("cli/approval.zig");
+    pub const route_events = @import("cli/route_events.zig");
     pub const upgrade = @import("cli/upgrade.zig");
+};
+pub const telemetry = struct {
+    pub const events = @import("telemetry/events.zig");
 };
 pub const tools = struct {
     pub const tool = @import("tools/tool.zig");
     pub const registry = @import("tools/registry.zig");
+    pub const file_read = @import("tools/file_read.zig");
 };
 pub const agent = struct {
     pub const loop = @import("agent/loop.zig");
+    pub const tool_policy = @import("agent/tool_policy.zig");
     pub const session = @import("agent/session.zig");
     pub const usage = @import("agent/usage.zig");
 };

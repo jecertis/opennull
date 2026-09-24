@@ -135,6 +135,27 @@ test "parses sandbox allow list" {
     try std.testing.expectEqualStrings("~/.config/opennull", cfg.sandbox_allow[0]);
 }
 
+// Scenario: Given optional harness route names, when config loads, then they
+// are retained as typed routing settings without changing existing fields.
+test "parses optional harness routing hints" {
+    const with_harness = example_toml ++
+        \\[harness]
+        \\fast_hint = "default"
+        \\powerful_hint = "powerful"
+        \\router_model = "models/router.l1ng"
+    ;
+    var dmap = try dotenv.parse(std.testing.allocator, "ANTHROPIC_API_KEY=x\n");
+    defer dmap.deinit(std.testing.allocator);
+    var penv = emptyEnv(std.testing.allocator);
+    defer penv.deinit();
+
+    var cfg = try config.load(std.testing.allocator, with_harness, &dmap, &penv);
+    defer cfg.deinit();
+    try std.testing.expectEqualStrings("default", cfg.harness.fast_hint.?);
+    try std.testing.expectEqualStrings("powerful", cfg.harness.powerful_hint.?);
+    try std.testing.expectEqualStrings("models/router.l1ng", cfg.harness.router_model.?);
+}
+
 // Scenario: Given a route that references a provider name not present in
 // [providers.*], when loaded, then load fails with UnknownProviderInRoute
 // rather than the router silently having a dangling reference later.
@@ -191,4 +212,28 @@ test "absent system_prompt loads as null" {
     var cfg = try config.load(std.testing.allocator, example_toml, &dmap, &penv);
     defer cfg.deinit();
     try std.testing.expectEqual(@as(?[]const u8, null), cfg.system_prompt);
+}
+
+// Scenario: Given no [telemetry] section, when config loads, then local
+// event logging stays off; given one, then both switches are read.
+test "telemetry is off by default and opt-in" {
+    var dmap = try dotenv.parse(std.testing.allocator, "ANTHROPIC_API_KEY=x\n");
+    defer dmap.deinit(std.testing.allocator);
+    var penv = emptyEnv(std.testing.allocator);
+    defer penv.deinit();
+
+    var plain = try config.load(std.testing.allocator, example_toml, &dmap, &penv);
+    defer plain.deinit();
+    try std.testing.expect(!plain.telemetry.local_events);
+    try std.testing.expect(!plain.telemetry.record_text);
+
+    const with_telemetry = example_toml ++
+        \\[telemetry]
+        \\local_events = true
+        \\record_text = true
+    ;
+    var cfg = try config.load(std.testing.allocator, with_telemetry, &dmap, &penv);
+    defer cfg.deinit();
+    try std.testing.expect(cfg.telemetry.local_events);
+    try std.testing.expect(cfg.telemetry.record_text);
 }

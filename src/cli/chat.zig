@@ -9,12 +9,17 @@ const session = @import("../agent/session.zig");
 const usage_mod = @import("../agent/usage.zig");
 const bootstrap = @import("bootstrap.zig");
 const display = @import("display.zig");
+const approval = @import("approval.zig");
+const route_events = @import("route_events.zig");
+const router = @import("../router/router.zig");
 
 pub const ParsedLine = union(enum) {
     /// Empty or whitespace-only input: ignore without an API call.
     skip,
     /// Explicit quit command.
     exit,
+    /// "/fast" or "/powerful": redo the previous prompt on that route.
+    override: router.PromptHint,
     /// Any other non-empty line is a user prompt (trimmed).
     prompt: []const u8,
 };
@@ -24,6 +29,8 @@ pub fn parseLine(raw: []const u8) ParsedLine {
     const line = std.mem.trim(u8, raw, " \t\r");
     if (line.len == 0) return .skip;
     if (std.mem.eql(u8, line, "/exit") or std.mem.eql(u8, line, "/quit")) return .exit;
+    if (std.mem.eql(u8, line, "/fast")) return .{ .override = .fast };
+    if (std.mem.eql(u8, line, "/powerful")) return .{ .override = .powerful };
     return .{ .prompt = line };
 }
 
@@ -53,21 +60,34 @@ pub fn execute(
 
     var history: session.History = .empty;
     var totals: usage_mod.UsageTotals = .{};
+    var session_cost: usage_mod.SessionCost = .{};
 
     var activity_reporter = display.StdoutReporter{ .allocator = allocator, .w = stdout };
 
     try stdout.print(
         "opennull chat — tools enabled, workspace: {s}\n" ++
-            "type a prompt, /exit to quit\n",
+            "type a prompt, /fast or /powerful to redo the last one on that route, /exit to quit\n",
         .{policy.workspace_root},
     );
 
     var stdin_buffer: [16384]u8 = undefined;
     var stdin_file_reader: std.Io.File.Reader = .init(.stdin(), io, &stdin_buffer);
     const stdin = &stdin_file_reader.interface;
+    var session_approver = approval.SessionApprover{ .console = .{ .reader = stdin, .w = stdout } };
+    defer session_approver.deinit();
+    if (boot.config.telemetry.local_events) {
+        try session_approver.enableEventLog(allocator, io, boot.workspace_root, boot.config.telemetry.record_text);
+    }
+    var recorder = route_events.RouteRecorder{ .log = session_approver.eventLog() };
+    if (try bootstrap.routerStatus(&boot, allocator)) |status| {
+        defer allocator.free(status);
+        try stdout.print("{s}\n", .{status});
+    }
+    // Copied out of the stdin buffer so /fast and /powerful can resend it.
+    var last_prompt: ?[]const u8 = null;
 
     while (true) {
-        try stdout.print("you> ", .{});
+        try stdout.print("\x1b[32myou>\x1b[0m ", .{});
         try stdout.flush();
 
         // null only on clean EOF before any bytes (Ctrl-D) — our exit.
@@ -79,50 +99,75 @@ pub fn execute(
             else => return err,
         } orelse break;
 
-        switch (parseLine(raw_line)) {
+        // `choice.hint` is the route the turn runs on; `engine_routed` is false when
+        // the user forced it, which is not a decision to record.
+        const text: []const u8, const choice: router.Classified, const engine_routed = switch (parseLine(raw_line)) {
             .skip => continue,
             .exit => break,
-            .prompt => |text| {
-                const in_before = totals.input_tokens;
-                const out_before = totals.output_tokens;
-                var live = display.LiveTextPrinter{ .w = stdout, .prefix = "assistant> " };
-                const reply = session.sendPrompt(
-                    arena.allocator(),
-                    io,
-                    boot.provider,
-                    &policy,
-                    &history,
-                    boot.model,
-                    text,
-                    .{
-                        .reporter = activity_reporter.reporter(),
-                        .totals = &totals,
-                        .system = boot.system_prompt,
-                        .text_sink = live.sink(),
-                    },
-                ) catch |err| {
-                    // Stay in the session: a failed request must not lose
-                    // the conversation already accumulated.
-                    try stdout.print("error: request failed: {t}\n", .{err});
+            .prompt => |t| blk: {
+                const owned = try arena.allocator().dupe(u8, t);
+                last_prompt = owned;
+                break :blk .{ owned, bootstrap.classify(&boot, owned), true };
+            },
+            .override => |h| blk: {
+                const prev = last_prompt orelse {
+                    try stdout.print("nothing to redo yet: type a prompt first\n", .{});
                     continue;
                 };
-                // Streaming already showed the reply live; only the
-                // non-streaming fallback needs it printed here.
-                if (live.printed_any) {
-                    try stdout.print("\n", .{});
-                } else {
-                    try stdout.print("assistant> {s}\n", .{reply});
-                }
-                const line = try display.formatTokensLine(
-                    allocator,
-                    totals.input_tokens - in_before,
-                    totals.output_tokens - out_before,
-                    totals,
-                    usage_mod.costOf(boot.config.pricing, boot.model, totals),
-                );
-                defer allocator.free(line);
-                try stdout.print("{s}\n", .{line});
+                recorder.overridden(h);
+                break :blk .{ prev, router.Classified{ .hint = h, .engine = "user", .confidence = null }, false };
             },
+        };
+        const before = totals;
+        const approved_before = session_approver.console.approved_count;
+        var live = display.LiveTextPrinter{ .w = stdout, .prefix = "assistant> " };
+        const selected = bootstrap.routeForHint(&boot, choice.hint);
+        if (engine_routed) recorder.decided(text, choice, selected.model);
+        const prov = bootstrap.providerFor(&boot, selected) catch |err| {
+            try stdout.print("error: route unavailable: {t}\n", .{err});
+            continue;
+        };
+        try stdout.print("route> {s}\n", .{selected.model});
+        const reply = session.sendPrompt(
+            arena.allocator(),
+            io,
+            prov,
+            &policy,
+            &history,
+            selected.model,
+            text,
+            .{
+                .reporter = activity_reporter.reporter(),
+                .totals = &totals,
+                .system = boot.system_prompt,
+                .text_sink = live.sink(),
+                .approver = session_approver.approver(),
+            },
+        ) catch |err| {
+            // Stay in the session: a failed request must not lose
+            // the conversation already accumulated.
+            try stdout.print("error: request failed: {t}\n", .{err});
+            continue;
+        };
+        // Streaming already showed the reply live; only the
+        // non-streaming fallback needs it printed here.
+        if (live.printed_any) {
+            try stdout.print("\n", .{});
+        } else {
+            try stdout.print("assistant> {s}\n", .{reply});
         }
+        if (engine_routed) recorder.turnFinished(choice.hint, session_approver.console.approved_count - approved_before);
+        const turn = usage_mod.since(totals, before);
+        session_cost.addTurn(boot.config.pricing, selected.model, turn);
+        const line = try display.formatTokensLine(
+            allocator,
+            turn.input_tokens,
+            turn.output_tokens,
+            totals,
+            session_cost.value(),
+            session_cost.partial(),
+        );
+        defer allocator.free(line);
+        try stdout.print("{s}\n", .{line});
     }
 }

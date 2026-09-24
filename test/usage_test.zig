@@ -54,3 +54,28 @@ test "costOf returns null for an entry with no rates" {
     totals.add(.{ .input_tokens = 5, .output_tokens = 5 });
     try std.testing.expectEqual(@as(?f64, null), usage.costOf(&pricing, "m", totals));
 }
+
+// Scenario: Given two turns on differently priced models, when the session
+// cost accumulates, then each turn is priced at its own model's rates.
+test "session cost prices each turn at its own model" {
+    const pricing = [_]usage.PriceEntry{
+        .{ .model = "cheap", .input = 1.0, .output = 2.0, .flat = null },
+        .{ .model = "dear", .input = 10.0, .output = 20.0, .flat = null },
+    };
+    var cost: usage.SessionCost = .{};
+    cost.addTurn(&pricing, "cheap", .{ .requests = 1, .input_tokens = 1_000_000, .output_tokens = 0 });
+    cost.addTurn(&pricing, "dear", .{ .requests = 1, .input_tokens = 0, .output_tokens = 1_000_000 });
+    try std.testing.expectApproxEqAbs(@as(f64, 21.0), cost.value().?, 1e-9);
+    try std.testing.expect(!cost.partial());
+
+    cost.addTurn(&pricing, "unknown-model", .{ .requests = 1, .input_tokens = 5, .output_tokens = 5 });
+    try std.testing.expect(cost.partial());
+    try std.testing.expectApproxEqAbs(@as(f64, 21.0), cost.value().?, 1e-9);
+}
+
+// Scenario: Given no priced turns, when asked, then there is no cost.
+test "session cost is null when nothing is priced" {
+    var cost: usage.SessionCost = .{};
+    cost.addTurn(&.{}, "m", .{ .requests = 1, .input_tokens = 1, .output_tokens = 1 });
+    try std.testing.expect(cost.value() == null);
+}

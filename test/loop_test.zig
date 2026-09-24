@@ -125,6 +125,67 @@ const RecordingReporter = struct {
     }
 };
 
+const FixedApprover = struct {
+    answer: bool,
+    calls: usize = 0,
+
+    fn approver(self: *FixedApprover) loop.Approver {
+        return .{ .ptr = self, .approveFn = approve };
+    }
+
+    fn approve(ptr: *anyopaque, _: []const u8, _: std.json.Value) bool {
+        const self: *FixedApprover = @ptrCast(@alignCast(ptr));
+        self.calls += 1;
+        return self.answer;
+    }
+};
+
+test "writes require approval and a declined write never reaches disk" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const policy = sandbox.SecurityPolicy{ .workspace_root = workspaceRootOf(tmp.dir, &root_buf) };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var transport = SequencedTransport{ .responses = &.{
+        .{ .status = 200, .body =
+        \\{"content":[{"type":"tool_use","id":"call_1","name":"file_write","input":{"path":"blocked.txt","content":"no"}}],"stop_reason":"tool_use"}
+        },
+        .{ .status = 200, .body = "{\"content\":[{\"type\":\"text\",\"text\":\"ack\"}],\"stop_reason\":\"end_turn\"}" },
+    } };
+    const p = anthropic.AnthropicProvider{ .transport = transport.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
+    var history = try oneUserMessage(a, "write a file");
+    var approver = FixedApprover{ .answer = false };
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude", .{ .approver = approver.approver() });
+    try std.testing.expectEqual(@as(usize, 1), approver.calls);
+    try std.testing.expect(history.items[2].content[0].tool_result.is_error);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.testing.io, "blocked.txt", .{}));
+}
+
+test "an approved write executes" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const policy = sandbox.SecurityPolicy{ .workspace_root = workspaceRootOf(tmp.dir, &root_buf) };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var transport = SequencedTransport{ .responses = &.{
+        .{ .status = 200, .body =
+        \\{"content":[{"type":"tool_use","id":"call_1","name":"file_write","input":{"path":"allowed.txt","content":"yes"}}],"stop_reason":"tool_use"}
+        },
+        .{ .status = 200, .body = "{\"content\":[{\"type\":\"text\",\"text\":\"ack\"}],\"stop_reason\":\"end_turn\"}" },
+    } };
+    const p = anthropic.AnthropicProvider{ .transport = transport.transport(), .base_url = "https://api.anthropic.com", .api_key = "k" };
+    var history = try oneUserMessage(a, "write a file");
+    var approver = FixedApprover{ .answer = true };
+    _ = try loop.runTurn(a, std.testing.io, p, &policy, &history, "claude", .{ .approver = approver.approver() });
+    const contents = try tmp.dir.readFileAlloc(std.testing.io, "allowed.txt", std.testing.allocator, .limited(32));
+    defer std.testing.allocator.free(contents);
+    try std.testing.expectEqualStrings("yes", contents);
+}
+
 // Scenario: Given a scripted turn that requests file_read and then answers,
 // when a recording reporter is attached, then it observes exactly one
 // `started` event carrying the tool's parsed input, followed by one

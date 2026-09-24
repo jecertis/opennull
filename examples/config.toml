@@ -29,5 +29,23 @@ provider = "local_openai"
 model = "llama3.1"
 tool_calling = true
 
+# Optional deterministic per-prompt routing. Direct read-only requests use
+# fast_hint; code changes and complex requests use powerful_hint. If either
+# route is absent, opennull falls back to general.default_hint.
+[harness]
+fast_hint = "local"
+powerful_hint = "default"
+# Optional LinearOne n-gram model (.l1ng) that replaces the keyword rules.
+# Not yet confirmed on opennull prompts, so leave it unset for now. If the
+# file is missing or invalid, opennull warns and uses the keyword router.
+# router_model = "router.l1ng"
+
 [sandbox]
 allow = []
+
+# Local decision log in LinearOne's event format v1, for training better
+# routers and edit guards. Off by default; nothing leaves the machine.
+# Writes <workspace>/.opennull/events.jsonl (keep .opennull/ out of git).
+# [telemetry]
+# local_events = true
+# record_text = false   # true also stores the tool call text (needed for training)

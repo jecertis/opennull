@@ -37,6 +37,7 @@ fn fixtureConfig() config_mod.Config {
         },
         .pricing = &.{},
         .sandbox_allow = &.{},
+        .harness = .{},
     };
 }
 
@@ -117,6 +118,43 @@ test "select distinguishes between configured hints" {
 test "select rejects an unknown hint" {
     const cfg = fixtureConfig();
     try std.testing.expectError(error.UnknownHint, router.select(&cfg, "no-such-hint"));
+}
+
+test "prompt policy chooses fast for direct reads and powerful for changes" {
+    try std.testing.expectEqual(router.PromptHint.fast, router.classifyPrompt("read src/main.zig"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("fix the failing test"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("what should we do?"));
+}
+
+// Scenario: Given keywords embedded inside other words, when classified,
+// then they no longer trigger ("latest" is not "test", "prefix" is not
+// "fix"), while real word starts and stems still do.
+test "prompt policy matches keywords only at word starts" {
+    try std.testing.expectEqual(router.PromptHint.fast, router.classifyPrompt("show me the latest version"));
+    try std.testing.expectEqual(router.PromptHint.fast, router.classifyPrompt("list files with the prefix foo"));
+    try std.testing.expectEqual(router.PromptHint.fast, router.classifyPrompt("find the credit card module"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("run the tests"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("Investigating a crash; show logs"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("(fix) the parser"));
+}
+
+test "prompt routing uses configured hints and falls back to default" {
+    var cfg = fixtureConfig();
+    cfg.harness = .{ .fast_hint = "cheap", .powerful_hint = "missing" };
+    const fast = router.selectForPrompt(&cfg, "show the README");
+    const default_selected = router.selectForPrompt(&cfg, "implement a feature");
+    try std.testing.expectEqualStrings("gpt-mini", fast.model);
+    try std.testing.expectEqualStrings("claude-sonnet-5", default_selected.model);
+}
+
+// Scenario: Given a user's /fast or /powerful override, when a route is
+// selected for that hint, then it uses the configured harness route and
+// the same default fallback as prompt routing.
+test "selectForHint routes an explicit override" {
+    var cfg = fixtureConfig();
+    cfg.harness = .{ .fast_hint = "cheap", .powerful_hint = "missing" };
+    try std.testing.expectEqualStrings("gpt-mini", router.selectForHint(&cfg, .fast).model);
+    try std.testing.expectEqualStrings("claude-sonnet-5", router.selectForHint(&cfg, .powerful).model);
 }
 
 // -- build ---------------------------------------------------------------
