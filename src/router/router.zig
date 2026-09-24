@@ -8,6 +8,7 @@ const std = @import("std");
 const config_mod = @import("../config/config.zig");
 const provider = @import("../provider/provider.zig");
 const any = @import("../provider/any.zig");
+const policy = @import("policy.zig");
 
 pub const Config = config_mod.Config;
 
@@ -30,6 +31,20 @@ pub fn select(cfg: *const Config, hint: []const u8) SelectError!Selected {
     }
     return error.UnknownHint;
 }
+
+/// Selects the route for one user prompt. A configured harness hint is used
+/// only when it resolves; otherwise general.default_hint remains the safe,
+/// backwards-compatible fallback.
+pub fn selectForPrompt(cfg: *const Config, prompt: []const u8) Selected {
+    const configured = switch (policy.classifyPrompt(prompt)) {
+        .fast => cfg.harness.fast_hint,
+        .powerful => cfg.harness.powerful_hint,
+    } orelse cfg.default_hint;
+    return select(cfg, configured) catch select(cfg, cfg.default_hint) catch unreachable;
+}
+
+pub const classifyPrompt = policy.classifyPrompt;
+pub const PromptHint = policy.Hint;
 
 pub const BuildError = error{ UnknownProviderKind, UnknownProvider };
 

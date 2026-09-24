@@ -9,6 +9,7 @@ const session = @import("../agent/session.zig");
 const usage_mod = @import("../agent/usage.zig");
 const bootstrap = @import("bootstrap.zig");
 const display = @import("display.zig");
+const approval = @import("approval.zig");
 
 pub const ParsedLine = union(enum) {
     /// Empty or whitespace-only input: ignore without an API call.
@@ -65,9 +66,10 @@ pub fn execute(
     var stdin_buffer: [16384]u8 = undefined;
     var stdin_file_reader: std.Io.File.Reader = .init(.stdin(), io, &stdin_buffer);
     const stdin = &stdin_file_reader.interface;
+    var console_approver = approval.ConsoleApprover{ .reader = stdin, .w = stdout };
 
     while (true) {
-        try stdout.print("you> ", .{});
+        try stdout.print("\x1b[32myou>\x1b[0m ", .{});
         try stdout.flush();
 
         // null only on clean EOF before any bytes (Ctrl-D) — our exit.
@@ -86,19 +88,26 @@ pub fn execute(
                 const in_before = totals.input_tokens;
                 const out_before = totals.output_tokens;
                 var live = display.LiveTextPrinter{ .w = stdout, .prefix = "assistant> " };
+                const selected = bootstrap.routeForPrompt(&boot, text);
+                const prov = bootstrap.providerFor(&boot, selected) catch |err| {
+                    try stdout.print("error: route unavailable: {t}\n", .{err});
+                    continue;
+                };
+                try stdout.print("route> {s}\n", .{selected.model});
                 const reply = session.sendPrompt(
                     arena.allocator(),
                     io,
-                    boot.provider,
+                    prov,
                     &policy,
                     &history,
-                    boot.model,
+                    selected.model,
                     text,
                     .{
                         .reporter = activity_reporter.reporter(),
                         .totals = &totals,
                         .system = boot.system_prompt,
                         .text_sink = live.sink(),
+                        .approver = console_approver.approver(),
                     },
                 ) catch |err| {
                     // Stay in the session: a failed request must not lose
@@ -118,7 +127,7 @@ pub fn execute(
                     totals.input_tokens - in_before,
                     totals.output_tokens - out_before,
                     totals,
-                    usage_mod.costOf(boot.config.pricing, boot.model, totals),
+                    usage_mod.costOf(boot.config.pricing, selected.model, totals),
                 );
                 defer allocator.free(line);
                 try stdout.print("{s}\n", .{line});

@@ -1,9 +1,7 @@
 //! Shared CLI startup: reads the optional `.env` and the required
 //! `config.toml` from the working directory, resolves provider api keys
-//! (process env wins over .env), selects the route named by
-//! `general.default_hint`, and constructs the concrete provider behind
-//! AnyProvider. This replaces cli/run.zig's and cli/chat.zig's interim
-//! hardcoded Anthropic path (the plan's Phase 5).
+//! (process env wins over .env), and retains routing configuration plus a
+//! shared HTTP transport for per-prompt route selection.
 //!
 //! `bootstrap` itself is a thin, deliberately untested seam — real file and
 //! env I/O, same policy as the command execute() functions; everything it
@@ -37,12 +35,9 @@ pub const Bootstrapped = struct {
     /// System prompt sent with every request: either the config's explicit
     /// override or the built-in agent charter.
     system_prompt: []const u8,
-    /// Heap-anchored so the transport pointers inside `provider` stay valid
-    /// for the lifetime of this value.
+    /// Heap-anchored transport used to build each prompt's provider.
     _http_transport: *http.HttpTransport,
     _allocator: std.mem.Allocator,
-    provider: any_mod.AnyProvider,
-    model: []const u8,
 
     pub fn deinit(self: *Bootstrapped) void {
         self.config.deinit();
@@ -115,7 +110,9 @@ pub fn bootstrap(
     const workspace_root = try allocator.dupe(u8, root_buf[0..cwd_len]);
     errdefer allocator.free(workspace_root);
 
-    const selected = try router.select(&cfg, cfg.default_hint);
+    // Preserve the established startup error for a misspelled default route;
+    // harness-specific hints are intentionally softer and fall back later.
+    _ = try router.select(&cfg, cfg.default_hint);
 
     const system_prompt = try buildSystemPrompt(allocator, workspace_root, cfg.system_prompt);
     errdefer allocator.free(system_prompt);
@@ -129,9 +126,15 @@ pub fn bootstrap(
         .system_prompt = system_prompt,
         ._http_transport = t,
         ._allocator = allocator,
-        .provider = try router.build(&cfg, selected, t.transport()),
-        .model = selected.model,
     };
+}
+
+pub fn routeForPrompt(self: *const Bootstrapped, prompt: []const u8) router.Selected {
+    return router.selectForPrompt(&self.config, prompt);
+}
+
+pub fn providerFor(self: *const Bootstrapped, selected: router.Selected) router.BuildError!any_mod.AnyProvider {
+    return router.build(&self.config, selected, self._http_transport.transport());
 }
 
 /// The config used when no config.toml exists: a fallback chain across
@@ -191,6 +194,7 @@ pub fn buildDefaultConfig(
         .routes = try routes.toOwnedSlice(a),
         .pricing = &.{},
         .sandbox_allow = &.{},
+        .harness = .{},
     };
 }
 

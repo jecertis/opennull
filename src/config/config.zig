@@ -27,6 +27,14 @@ pub const PriceEntry = struct {
     flat: ?f64,
 };
 
+/// Optional named routes for the deterministic harness router. Missing or
+/// stale names deliberately fall back to general.default_hint at selection
+/// time, preserving single-route and zero-config installations.
+pub const HarnessConfig = struct {
+    fast_hint: ?[]const u8 = null,
+    powerful_hint: ?[]const u8 = null,
+};
+
 pub const LoadError = error{
     MissingApiKeyEnv,
     UnknownProviderInRoute,
@@ -43,6 +51,7 @@ pub const Config = struct {
     routes: []const RouteConfig,
     pricing: []const PriceEntry,
     sandbox_allow: []const []const u8,
+    harness: HarnessConfig,
 
     pub fn deinit(self: *Config) void {
         self.arena.deinit();
@@ -79,6 +88,7 @@ pub fn load(
     try validateRoutes(routes, providers);
     const pricing = try loadPricing(a, doc.root);
     const sandbox_allow = try loadSandboxAllow(a, doc.root);
+    const harness = try loadHarness(a, doc.root);
 
     return Config{
         .arena = arena,
@@ -88,6 +98,17 @@ pub fn load(
         .routes = routes,
         .pricing = pricing,
         .sandbox_allow = sandbox_allow,
+        .harness = harness,
+    };
+}
+
+fn loadHarness(a: std.mem.Allocator, root: *toml.Table) !HarnessConfig {
+    const t = toml.getTable(root, "harness") orelse return .{};
+    const fast = toml.getString(t, "fast_hint");
+    const powerful = toml.getString(t, "powerful_hint");
+    return .{
+        .fast_hint = if (fast) |v| try a.dupe(u8, v) else null,
+        .powerful_hint = if (powerful) |v| try a.dupe(u8, v) else null,
     };
 }
 

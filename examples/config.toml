@@ -29,5 +29,12 @@ provider = "local_openai"
 model = "llama3.1"
 tool_calling = true
 
+# Optional deterministic per-prompt routing. Direct read-only requests use
+# fast_hint; code changes and complex requests use powerful_hint. If either
+# route is absent, opennull falls back to general.default_hint.
+[harness]
+fast_hint = "local"
+powerful_hint = "default"
+
 [sandbox]
 allow = []

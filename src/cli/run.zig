@@ -10,6 +10,7 @@ const session = @import("../agent/session.zig");
 const usage_mod = @import("../agent/usage.zig");
 const bootstrap = @import("bootstrap.zig");
 const display = @import("display.zig");
+const approval = @import("approval.zig");
 
 pub const ParsedArgs = union(enum) {
     run: struct { prompt: []const u8 },
@@ -63,20 +64,27 @@ pub fn execute(
     var totals: usage_mod.UsageTotals = .{};
     var activity_reporter = display.StdoutReporter{ .allocator = allocator, .w = stdout };
     var live = display.LiveTextPrinter{ .w = stdout, .prefix = "" };
+    var stdin_buffer: [256]u8 = undefined;
+    var stdin_file_reader: std.Io.File.Reader = .init(.stdin(), io, &stdin_buffer);
+    var console_approver = approval.ConsoleApprover{ .reader = &stdin_file_reader.interface, .w = stdout };
+    const selected = bootstrap.routeForPrompt(&boot, prompt);
+    const prov = try bootstrap.providerFor(&boot, selected);
+    try stdout.print("route> {s}\n", .{selected.model});
 
     const reply = session.sendPrompt(
         arena.allocator(),
         io,
-        boot.provider,
+        prov,
         &policy,
         &history,
-        boot.model,
+        selected.model,
         prompt,
         .{
             .reporter = activity_reporter.reporter(),
             .totals = &totals,
             .system = boot.system_prompt,
             .text_sink = live.sink(),
+            .approver = console_approver.approver(),
         },
     ) catch |err| {
         try stdout.print("error: request failed: {t}\n", .{err});
@@ -93,7 +101,7 @@ pub fn execute(
         totals.input_tokens,
         totals.output_tokens,
         totals,
-        usage_mod.costOf(boot.config.pricing, boot.model, totals),
+        usage_mod.costOf(boot.config.pricing, selected.model, totals),
     );
     defer allocator.free(line);
     try stdout.print("{s}\n", .{line});

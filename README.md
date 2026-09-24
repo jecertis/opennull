@@ -118,6 +118,7 @@ See [`examples/config.toml`](examples/config.toml) for the full annotated tour.
 | `[[routes]]` | Map hint names to provider + model combos; unknown hints fail loudly, never silently misroute |
 | `[pricing.<model>]` | $/Mtok rates (+ per-request flat fees) powering those satisfying cost receipts |
 | `[sandbox]` | `allow` list of extra readable paths beyond the workspace |
+| `[harness]` | `fast_hint` / `powerful_hint` route selection; writes and edits always ask before running |
 
 API keys resolve from the process environment first, `.env` second. Secrets
 never touch the repo.

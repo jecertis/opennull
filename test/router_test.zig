@@ -37,6 +37,7 @@ fn fixtureConfig() config_mod.Config {
         },
         .pricing = &.{},
         .sandbox_allow = &.{},
+        .harness = .{},
     };
 }
 
@@ -117,6 +118,21 @@ test "select distinguishes between configured hints" {
 test "select rejects an unknown hint" {
     const cfg = fixtureConfig();
     try std.testing.expectError(error.UnknownHint, router.select(&cfg, "no-such-hint"));
+}
+
+test "prompt policy chooses fast for direct reads and powerful for changes" {
+    try std.testing.expectEqual(router.PromptHint.fast, router.classifyPrompt("read src/main.zig"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("fix the failing test"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("what should we do?"));
+}
+
+test "prompt routing uses configured hints and falls back to default" {
+    var cfg = fixtureConfig();
+    cfg.harness = .{ .fast_hint = "cheap", .powerful_hint = "missing" };
+    const fast = router.selectForPrompt(&cfg, "show the README");
+    const default_selected = router.selectForPrompt(&cfg, "implement a feature");
+    try std.testing.expectEqualStrings("gpt-mini", fast.model);
+    try std.testing.expectEqualStrings("claude-sonnet-5", default_selected.model);
 }
 
 // -- build ---------------------------------------------------------------

@@ -6,6 +6,7 @@ const provider = @import("../provider/provider.zig");
 const registry = @import("../tools/registry.zig");
 const sandbox = @import("../security/sandbox.zig");
 const usage_mod = @import("usage.zig");
+const tool_policy = @import("tool_policy.zig");
 
 pub const History = std.ArrayListUnmanaged(provider.Message);
 
@@ -13,7 +14,19 @@ pub const History = std.ArrayListUnmanaged(provider.Message);
 /// the optional Reporter so UIs (REPL, future TUI) can show live activity.
 pub const ToolActivity = union(enum) {
     started: struct { name: []const u8, input: std.json.Value },
+    approval_requested: struct { name: []const u8, input: std.json.Value },
     finished: struct { name: []const u8, ok: bool, detail: []const u8 },
+};
+
+/// A UI-owned confirmation hook for a single mutating tool call. Returning
+/// false (including because input is unavailable) declines the operation.
+pub const Approver = struct {
+    ptr: *anyopaque,
+    approveFn: *const fn (ptr: *anyopaque, name: []const u8, input: std.json.Value) bool,
+
+    pub fn approve(self: Approver, name: []const u8, input: std.json.Value) bool {
+        return self.approveFn(self.ptr, name, input);
+    }
 };
 
 /// Context + function-pointer pair (same vtable style as
@@ -38,6 +51,10 @@ pub const Options = struct {
     /// When set, the turn streams: live text deltas push here. If the
     /// transport cannot stream, buffered chat is used instead.
     text_sink: ?provider.StreamSink = null,
+    /// Required by the built-in policy before file_write/file_edit execute.
+    /// Absence is equivalent to declining, which keeps noninteractive callers
+    /// safe by default.
+    approver: ?Approver = null,
 };
 
 /// `allocator` MUST be a bulk-reclaim allocator (an arena) owned by the
@@ -89,13 +106,20 @@ pub fn runTurn(
         for (resp.content) |block| {
             switch (block) {
                 .tool_use => |tu| {
-                    if (opts.reporter) |rep| rep.notify(.{ .started = .{ .name = tu.name, .input = tu.input } });
-
                     var result_content: []const u8 = "unknown tool";
                     var is_err = true;
 
                     if (registry.find(tu.name)) |t| {
-                        if (t.execute(allocator, io, policy, tu.input)) |result| {
+                        const approved = blk: {
+                            if (tool_policy.decide(tu.name) == .allow) break :blk true;
+                            if (opts.reporter) |rep| rep.notify(.{ .approval_requested = .{ .name = tu.name, .input = tu.input } });
+                            break :blk if (opts.approver) |a| a.approve(tu.name, tu.input) else false;
+                        };
+                        if (!approved) {
+                            result_content = "user declined tool execution";
+                            is_err = true;
+                        } else if (t.execute(allocator, io, policy, tu.input)) |result| {
+                            if (opts.reporter) |rep| rep.notify(.{ .started = .{ .name = tu.name, .input = tu.input } });
                             if (result.success) {
                                 result_content = result.output;
                                 is_err = false;
@@ -107,6 +131,11 @@ pub fn runTurn(
                             result_content = @errorName(err);
                             is_err = true;
                         }
+                    } else {
+                        // Preserve the activity contract for unsupported
+                        // requests: the loop attempted dispatch, then
+                        // reports its own failure.
+                        if (opts.reporter) |rep| rep.notify(.{ .started = .{ .name = tu.name, .input = tu.input } });
                     }
 
                     if (opts.reporter) |rep| rep.notify(.{ .finished = .{

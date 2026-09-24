@@ -62,6 +62,17 @@ pub fn formatToolFinished(
     return std.fmt.allocPrint(allocator, "[tool] {s} failed: {s}", .{ name, detail[0..first_line_len] });
 }
 
+/// "[approval] file_write {\"path\":\"a.txt\",...}". Caller frees.
+pub fn formatApprovalRequested(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    input: std.json.Value,
+) ![]u8 {
+    const input_json = try std.json.Stringify.valueAlloc(allocator, input, .{});
+    defer allocator.free(input_json);
+    return std.fmt.allocPrint(allocator, "[approval] {s} {s}", .{ name, input_json });
+}
+
 /// "tokens> <in> in / <out> out this turn | session <in> in / <out> out"
 /// plus, when the model has a pricing entry, " | $<cost>". Caller frees.
 pub fn formatTokensLine(
@@ -100,6 +111,7 @@ pub const StdoutReporter = struct {
     fn print(self: *StdoutReporter, activity: loop.ToolActivity) !void {
         const line = switch (activity) {
             .started => |e| try formatToolStarted(self.allocator, e.name, e.input),
+            .approval_requested => |e| try formatApprovalRequested(self.allocator, e.name, e.input),
             .finished => |e| try formatToolFinished(self.allocator, e.name, e.ok, e.detail),
         };
         defer self.allocator.free(line);

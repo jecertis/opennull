@@ -22,6 +22,7 @@ pub const cli = struct {
     pub const chat = @import("cli/chat.zig");
     pub const bootstrap = @import("cli/bootstrap.zig");
     pub const display = @import("cli/display.zig");
+    pub const approval = @import("cli/approval.zig");
     pub const upgrade = @import("cli/upgrade.zig");
 };
 pub const tools = struct {
@@ -30,6 +31,7 @@ pub const tools = struct {
 };
 pub const agent = struct {
     pub const loop = @import("agent/loop.zig");
+    pub const tool_policy = @import("agent/tool_policy.zig");
     pub const session = @import("agent/session.zig");
     pub const usage = @import("agent/usage.zig");
 };

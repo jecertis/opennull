@@ -135,6 +135,25 @@ test "parses sandbox allow list" {
     try std.testing.expectEqualStrings("~/.config/opennull", cfg.sandbox_allow[0]);
 }
 
+// Scenario: Given optional harness route names, when config loads, then they
+// are retained as typed routing settings without changing existing fields.
+test "parses optional harness routing hints" {
+    const with_harness = example_toml ++
+        \\[harness]
+        \\fast_hint = "default"
+        \\powerful_hint = "powerful"
+    ;
+    var dmap = try dotenv.parse(std.testing.allocator, "ANTHROPIC_API_KEY=x\n");
+    defer dmap.deinit(std.testing.allocator);
+    var penv = emptyEnv(std.testing.allocator);
+    defer penv.deinit();
+
+    var cfg = try config.load(std.testing.allocator, with_harness, &dmap, &penv);
+    defer cfg.deinit();
+    try std.testing.expectEqualStrings("default", cfg.harness.fast_hint.?);
+    try std.testing.expectEqualStrings("powerful", cfg.harness.powerful_hint.?);
+}
+
 // Scenario: Given a route that references a provider name not present in
 // [providers.*], when loaded, then load fails with UnknownProviderInRoute
 // rather than the router silently having a dangling reference later.
