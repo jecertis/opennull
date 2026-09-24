@@ -74,13 +74,15 @@ pub fn formatApprovalRequested(
 }
 
 /// "tokens> <in> in / <out> out this turn | session <in> in / <out> out"
-/// plus, when the model has a pricing entry, " | $<cost>". Caller frees.
+/// plus, when any turn was priced, " | $<session cost>". Caller frees.
 pub fn formatTokensLine(
     allocator: std.mem.Allocator,
     turn_in: u64,
     turn_out: u64,
     totals: usage_mod.UsageTotals,
     cost: ?f64,
+    /// The cost leaves out turns whose model has no pricing entry.
+    cost_partial: bool,
 ) ![]u8 {
     const base = try std.fmt.allocPrint(
         allocator,
@@ -89,7 +91,7 @@ pub fn formatTokensLine(
     );
     const c = cost orelse return base;
     defer allocator.free(base);
-    return std.fmt.allocPrint(allocator, "{s} | ${d:.4}", .{ base, c });
+    return std.fmt.allocPrint(allocator, "{s} | ${d:.4}{s}", .{ base, c, if (cost_partial) " (some turns unpriced)" else "" });
 }
 
 /// Prints tool activity to a Writer as it happens. Best-effort: notify

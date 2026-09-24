@@ -62,7 +62,7 @@ test "formatTokensLine renders turn and session totals without cost" {
         .input_tokens = 4567,
         .output_tokens = 890,
     };
-    const line = try display.formatTokensLine(std.testing.allocator, 1234, 567, totals, null);
+    const line = try display.formatTokensLine(std.testing.allocator, 1234, 567, totals, null, false);
     defer std.testing.allocator.free(line);
     try std.testing.expectEqualStrings(
         "tokens> 1234 in / 567 out this turn | session 4567 in / 890 out",
@@ -78,10 +78,22 @@ test "formatTokensLine appends the cost when priced" {
         .input_tokens = 100,
         .output_tokens = 50,
     };
-    const line = try display.formatTokensLine(std.testing.allocator, 100, 50, totals, 0.0125);
+    const line = try display.formatTokensLine(std.testing.allocator, 100, 50, totals, 0.0125, false);
     defer std.testing.allocator.free(line);
     try std.testing.expectEqualStrings(
         "tokens> 100 in / 50 out this turn | session 100 in / 50 out | $0.0125",
+        line,
+    );
+}
+
+// Scenario: Given a session where some turns ran on an unpriced model, when
+// the line is rendered, then the cost is marked as partial.
+test "formatTokensLine marks a partial session cost" {
+    const totals: opennull.agent.usage.UsageTotals = .{ .requests = 2, .input_tokens = 200, .output_tokens = 100 };
+    const line = try display.formatTokensLine(std.testing.allocator, 100, 50, totals, 0.0125, true);
+    defer std.testing.allocator.free(line);
+    try std.testing.expectEqualStrings(
+        "tokens> 100 in / 50 out this turn | session 200 in / 100 out | $0.0125 (some turns unpriced)",
         line,
     );
 }

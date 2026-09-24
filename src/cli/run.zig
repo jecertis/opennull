@@ -116,6 +116,7 @@ pub fn execute(
         totals.output_tokens,
         totals,
         usage_mod.costOf(boot.config.pricing, selected.model, totals),
+        false,
     );
     defer allocator.free(line);
     try stdout.print("{s}\n", .{line});

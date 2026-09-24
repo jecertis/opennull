@@ -44,3 +44,41 @@ pub fn costOf(
     if (e.flat) |fee| cost += fee * @as(f64, @floatFromInt(totals.requests));
     return cost;
 }
+
+/// Running session cost, priced turn by turn at the model that served each
+/// turn: routing can change the model between turns, so pricing the whole
+/// session at the latest model's rates would be wrong.
+pub const SessionCost = struct {
+    total: f64 = 0,
+    priced_turns: u32 = 0,
+    unpriced_turns: u32 = 0,
+
+    pub fn addTurn(self: *SessionCost, pricing: []const PriceEntry, model: []const u8, turn: UsageTotals) void {
+        if (turn.requests == 0) return;
+        if (costOf(pricing, model, turn)) |c| {
+            self.total += c;
+            self.priced_turns += 1;
+        } else {
+            self.unpriced_turns += 1;
+        }
+    }
+
+    /// Null when no turn could be priced.
+    pub fn value(self: SessionCost) ?f64 {
+        return if (self.priced_turns > 0) self.total else null;
+    }
+
+    /// True when the total leaves out turns whose model has no pricing.
+    pub fn partial(self: SessionCost) bool {
+        return self.priced_turns > 0 and self.unpriced_turns > 0;
+    }
+};
+
+/// Usage accumulated between two snapshots of the same totals.
+pub fn since(now: UsageTotals, before: UsageTotals) UsageTotals {
+    return .{
+        .requests = now.requests - before.requests,
+        .input_tokens = now.input_tokens - before.input_tokens,
+        .output_tokens = now.output_tokens - before.output_tokens,
+    };
+}

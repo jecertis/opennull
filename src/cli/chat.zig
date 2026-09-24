@@ -60,6 +60,7 @@ pub fn execute(
 
     var history: session.History = .empty;
     var totals: usage_mod.UsageTotals = .{};
+    var session_cost: usage_mod.SessionCost = .{};
 
     var activity_reporter = display.StdoutReporter{ .allocator = allocator, .w = stdout };
 
@@ -117,8 +118,7 @@ pub fn execute(
                 break :blk .{ prev, router.Classified{ .hint = h, .engine = "user", .confidence = null }, false };
             },
         };
-        const in_before = totals.input_tokens;
-        const out_before = totals.output_tokens;
+        const before = totals;
         const approved_before = session_approver.console.approved_count;
         var live = display.LiveTextPrinter{ .w = stdout, .prefix = "assistant> " };
         const selected = bootstrap.routeForHint(&boot, choice.hint);
@@ -157,12 +157,15 @@ pub fn execute(
             try stdout.print("assistant> {s}\n", .{reply});
         }
         if (engine_routed) recorder.turnFinished(choice.hint, session_approver.console.approved_count - approved_before);
+        const turn = usage_mod.since(totals, before);
+        session_cost.addTurn(boot.config.pricing, selected.model, turn);
         const line = try display.formatTokensLine(
             allocator,
-            totals.input_tokens - in_before,
-            totals.output_tokens - out_before,
+            turn.input_tokens,
+            turn.output_tokens,
             totals,
-            usage_mod.costOf(boot.config.pricing, selected.model, totals),
+            session_cost.value(),
+            session_cost.partial(),
         );
         defer allocator.free(line);
         try stdout.print("{s}\n", .{line});
