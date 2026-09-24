@@ -135,6 +135,16 @@ test "prompt routing uses configured hints and falls back to default" {
     try std.testing.expectEqualStrings("claude-sonnet-5", default_selected.model);
 }
 
+// Scenario: Given a user's /fast or /powerful override, when a route is
+// selected for that hint, then it uses the configured harness route and
+// the same default fallback as prompt routing.
+test "selectForHint routes an explicit override" {
+    var cfg = fixtureConfig();
+    cfg.harness = .{ .fast_hint = "cheap", .powerful_hint = "missing" };
+    try std.testing.expectEqualStrings("gpt-mini", router.selectForHint(&cfg, .fast).model);
+    try std.testing.expectEqualStrings("claude-sonnet-5", router.selectForHint(&cfg, .powerful).model);
+}
+
 // -- build ---------------------------------------------------------------
 
 // Scenario: Given a selection naming the anthropic-kind provider, when

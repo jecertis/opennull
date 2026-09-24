@@ -23,7 +23,11 @@ pub const cli = struct {
     pub const bootstrap = @import("cli/bootstrap.zig");
     pub const display = @import("cli/display.zig");
     pub const approval = @import("cli/approval.zig");
+    pub const route_events = @import("cli/route_events.zig");
     pub const upgrade = @import("cli/upgrade.zig");
+};
+pub const telemetry = struct {
+    pub const events = @import("telemetry/events.zig");
 };
 pub const tools = struct {
     pub const tool = @import("tools/tool.zig");

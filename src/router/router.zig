@@ -36,7 +36,13 @@ pub fn select(cfg: *const Config, hint: []const u8) SelectError!Selected {
 /// only when it resolves; otherwise general.default_hint remains the safe,
 /// backwards-compatible fallback.
 pub fn selectForPrompt(cfg: *const Config, prompt: []const u8) Selected {
-    const configured = switch (policy.classifyPrompt(prompt)) {
+    return selectForHint(cfg, policy.classifyPrompt(prompt));
+}
+
+/// The route for an already-decided hint, e.g. a user's /fast or /powerful
+/// override. Same fallback to general.default_hint as selectForPrompt.
+pub fn selectForHint(cfg: *const Config, hint: policy.Hint) Selected {
+    const configured = switch (hint) {
         .fast => cfg.harness.fast_hint,
         .powerful => cfg.harness.powerful_hint,
     } orelse cfg.default_hint;

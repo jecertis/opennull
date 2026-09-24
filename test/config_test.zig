@@ -211,3 +211,27 @@ test "absent system_prompt loads as null" {
     defer cfg.deinit();
     try std.testing.expectEqual(@as(?[]const u8, null), cfg.system_prompt);
 }
+
+// Scenario: Given no [telemetry] section, when config loads, then local
+// event logging stays off; given one, then both switches are read.
+test "telemetry is off by default and opt-in" {
+    var dmap = try dotenv.parse(std.testing.allocator, "ANTHROPIC_API_KEY=x\n");
+    defer dmap.deinit(std.testing.allocator);
+    var penv = emptyEnv(std.testing.allocator);
+    defer penv.deinit();
+
+    var plain = try config.load(std.testing.allocator, example_toml, &dmap, &penv);
+    defer plain.deinit();
+    try std.testing.expect(!plain.telemetry.local_events);
+    try std.testing.expect(!plain.telemetry.record_text);
+
+    const with_telemetry = example_toml ++
+        \\[telemetry]
+        \\local_events = true
+        \\record_text = true
+    ;
+    var cfg = try config.load(std.testing.allocator, with_telemetry, &dmap, &penv);
+    defer cfg.deinit();
+    try std.testing.expect(cfg.telemetry.local_events);
+    try std.testing.expect(cfg.telemetry.record_text);
+}

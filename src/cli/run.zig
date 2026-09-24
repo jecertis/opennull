@@ -11,6 +11,8 @@ const usage_mod = @import("../agent/usage.zig");
 const bootstrap = @import("bootstrap.zig");
 const display = @import("display.zig");
 const approval = @import("approval.zig");
+const route_events = @import("route_events.zig");
+const router = @import("../router/router.zig");
 
 pub const ParsedArgs = union(enum) {
     run: struct { prompt: []const u8 },
@@ -66,8 +68,15 @@ pub fn execute(
     var live = display.LiveTextPrinter{ .w = stdout, .prefix = "" };
     var stdin_buffer: [256]u8 = undefined;
     var stdin_file_reader: std.Io.File.Reader = .init(.stdin(), io, &stdin_buffer);
-    var console_approver = approval.ConsoleApprover{ .reader = &stdin_file_reader.interface, .w = stdout };
-    const selected = bootstrap.routeForPrompt(&boot, prompt);
+    var session_approver = approval.SessionApprover{ .console = .{ .reader = &stdin_file_reader.interface, .w = stdout } };
+    defer session_approver.deinit();
+    if (boot.config.telemetry.local_events) {
+        try session_approver.enableEventLog(allocator, io, boot.workspace_root, boot.config.telemetry.record_text);
+    }
+    var recorder = route_events.RouteRecorder{ .log = session_approver.eventLog() };
+    const hint = router.classifyPrompt(prompt);
+    const selected = bootstrap.routeForHint(&boot, hint);
+    recorder.decided(prompt, hint, selected.model);
     const prov = try bootstrap.providerFor(&boot, selected);
     try stdout.print("route> {s}\n", .{selected.model});
 
@@ -84,7 +93,7 @@ pub fn execute(
             .totals = &totals,
             .system = boot.system_prompt,
             .text_sink = live.sink(),
-            .approver = console_approver.approver(),
+            .approver = session_approver.approver(),
         },
     ) catch |err| {
         try stdout.print("error: request failed: {t}\n", .{err});
@@ -95,6 +104,7 @@ pub fn execute(
     } else {
         try stdout.print("{s}\n", .{reply});
     }
+    recorder.turnFinished(hint, session_approver.console.approved_count);
 
     const line = try display.formatTokensLine(
         allocator,

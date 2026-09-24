@@ -35,6 +35,14 @@ pub const HarnessConfig = struct {
     powerful_hint: ?[]const u8 = null,
 };
 
+/// Local decision/outcome log (LinearOne event format v1). Off unless the
+/// user opts in; nothing leaves the machine. `record_text` additionally
+/// stores the classified input, which training needs.
+pub const TelemetryConfig = struct {
+    local_events: bool = false,
+    record_text: bool = false,
+};
+
 pub const LoadError = error{
     MissingApiKeyEnv,
     UnknownProviderInRoute,
@@ -52,6 +60,7 @@ pub const Config = struct {
     pricing: []const PriceEntry,
     sandbox_allow: []const []const u8,
     harness: HarnessConfig,
+    telemetry: TelemetryConfig = .{},
 
     pub fn deinit(self: *Config) void {
         self.arena.deinit();
@@ -89,6 +98,7 @@ pub fn load(
     const pricing = try loadPricing(a, doc.root);
     const sandbox_allow = try loadSandboxAllow(a, doc.root);
     const harness = try loadHarness(a, doc.root);
+    const telemetry = loadTelemetry(doc.root);
 
     return Config{
         .arena = arena,
@@ -99,6 +109,15 @@ pub fn load(
         .pricing = pricing,
         .sandbox_allow = sandbox_allow,
         .harness = harness,
+        .telemetry = telemetry,
+    };
+}
+
+fn loadTelemetry(root: *toml.Table) TelemetryConfig {
+    const t = toml.getTable(root, "telemetry") orelse return .{};
+    return .{
+        .local_events = toml.getBool(t, "local_events") orelse false,
+        .record_text = toml.getBool(t, "record_text") orelse false,
     };
 }
 

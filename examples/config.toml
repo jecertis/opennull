@@ -38,3 +38,10 @@ powerful_hint = "default"
 
 [sandbox]
 allow = []
+
+# Local decision log in LinearOne's event format v1, for training better
+# routers and edit guards. Off by default; nothing leaves the machine.
+# Writes <workspace>/.opennull/events.jsonl (keep .opennull/ out of git).
+# [telemetry]
+# local_events = true
+# record_text = false   # true also stores the tool call text (needed for training)

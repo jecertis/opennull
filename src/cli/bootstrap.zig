@@ -133,6 +133,10 @@ pub fn routeForPrompt(self: *const Bootstrapped, prompt: []const u8) router.Sele
     return router.selectForPrompt(&self.config, prompt);
 }
 
+pub fn routeForHint(self: *const Bootstrapped, hint: router.PromptHint) router.Selected {
+    return router.selectForHint(&self.config, hint);
+}
+
 pub fn providerFor(self: *const Bootstrapped, selected: router.Selected) router.BuildError!any_mod.AnyProvider {
     return router.build(&self.config, selected, self._http_transport.transport());
 }

@@ -83,7 +83,7 @@ sculpt your own providers, routes, hints, pricing table, and sandbox allow-list.
 |---|---|
 | `opennull` | Opens the interactive chat REPL — the default experience. |
 | `opennull run "<prompt>"` | One glorious agent turn — tools fire live, text streams in, then a token/cost receipt prints and it exits like a professional. |
-| `opennull chat` | Same as bare `opennull` — the same machinery, multi-turn. History persists; blank lines ignored; `/exit`, `/quit`, or Ctrl-D when you're done. |
+| `opennull chat` | Same as bare `opennull` — the same machinery, multi-turn. History persists; blank lines ignored; `/fast` or `/powerful` redoes your last prompt on that route; `/exit`, `/quit`, or Ctrl-D when you're done. |
 
 Both stream over SSE for every supported provider — and if a transport can't
 stream, they quietly fall back without making a scene.
