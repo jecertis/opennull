@@ -4,6 +4,11 @@ const std = @import("std");
 const sandbox = @import("../security/sandbox.zig");
 const tool = @import("tool.zig");
 
+/// Whole-file reads land in the model's context; beyond this the model is
+/// pointed at grep instead of flooding the conversation.
+pub const max_bytes = 256 * 1024;
+const too_large = "file is larger than 256 KiB; use grep to find the relevant lines";
+
 pub const FileReadTool = struct {
     pub fn spec(self: FileReadTool, allocator: std.mem.Allocator) !tool.ToolSpec {
         _ = self;
@@ -46,8 +51,9 @@ pub const FileReadTool = struct {
             return .{ .success = false, .output = "", .err = "path is outside the allowed workspace" };
         defer allocator.free(resolved);
 
-        const contents = std.Io.Dir.cwd().readFileAlloc(io, resolved, allocator, .unlimited) catch |err| {
-            return .{ .success = false, .output = "", .err = @errorName(err) };
+        const contents = std.Io.Dir.cwd().readFileAlloc(io, resolved, allocator, .limited(max_bytes)) catch |err| switch (err) {
+            error.StreamTooLong => return .{ .success = false, .output = "", .err = too_large },
+            else => return .{ .success = false, .output = "", .err = @errorName(err) },
         };
 
         return .{ .success = true, .output = contents };

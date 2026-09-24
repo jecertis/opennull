@@ -33,6 +33,7 @@ pub const telemetry = struct {
 pub const tools = struct {
     pub const tool = @import("tools/tool.zig");
     pub const registry = @import("tools/registry.zig");
+    pub const file_read = @import("tools/file_read.zig");
 };
 pub const agent = struct {
     pub const loop = @import("agent/loop.zig");
