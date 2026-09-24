@@ -43,6 +43,24 @@ say "==> downloading $ASSET"
 curl -fSL --progress-bar -o "$TMPDIR_DL/$ASSET" "$URL" ||
     fail "download failed ($URL)"
 
+# Verify against the release's SHA256SUMS when it publishes one (releases
+# before v0.1.3 don't; those install with a warning).
+if curl -fsSL -o "$TMPDIR_DL/SHA256SUMS" "https://github.com/$REPO/releases/download/$TAG/SHA256SUMS" 2>/dev/null; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$TMPDIR_DL/$ASSET" | cut -d' ' -f1)
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL=$(shasum -a 256 "$TMPDIR_DL/$ASSET" | cut -d' ' -f1)
+    else
+        fail "need sha256sum or shasum to verify the download"
+    fi
+    EXPECTED=$(awk -v f="$ASSET" '$2 == f || $2 == "*" f { print $1 }' "$TMPDIR_DL/SHA256SUMS")
+    [ -n "$EXPECTED" ] || fail "SHA256SUMS has no entry for $ASSET"
+    [ "$EXPECTED" = "$ACTUAL" ] || fail "checksum mismatch for $ASSET; not installing"
+    say "==> checksum verified"
+else
+    say "warning: release $TAG has no SHA256SUMS; download integrity not verified"
+fi
+
 say "==> extracting"
 tar -xzf "$TMPDIR_DL/$ASSET" -C "$TMPDIR_DL"
 

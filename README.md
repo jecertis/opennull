@@ -130,6 +130,7 @@ Requires **Zig 0.16.0**.
 zig build            # binary at zig-out/bin/opennull
 zig build test       # 22 offline test binaries, 136 specs, zero network needed
 zig build -Doptimize=ReleaseSafe -Dstrip=true   # the release-grade binary
+scripts/release.sh   # all four release tarballs + SHA256SUMS into dist/
 ```
 
 ## Architecture
