@@ -255,7 +255,10 @@ fn runUpgrade(
     // Private work dir next to the binary: same filesystem, so the final
     // rename is atomic, and not a guessable name in shared /tmp. createDir
     // fails if anything already exists there, so nothing planted is reused.
-    const work_dir = try std.fmt.allocPrint(allocator, "{s}/.opennull-upgrade-{d}", .{ exe_dir, std.c.getpid() });
+    // Suffix from the clock, not getpid(): std.c needs libc, which the
+    // static musl Linux builds don't link.
+    const stamp: u64 = @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(io, .real).toNanoseconds())));
+    const work_dir = try std.fmt.allocPrint(allocator, "{s}/.opennull-upgrade-{x}", .{ exe_dir, stamp });
     defer allocator.free(work_dir);
     std.Io.Dir.cwd().createDir(io, work_dir, .default_dir) catch |err| {
         try stdout.print("error: cannot create {s} ({t})\n", .{ work_dir, err });
