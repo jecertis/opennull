@@ -69,8 +69,10 @@ pub fn buildSystemPrompt(
         \\
         \\Workspace root: {s}
         \\
-        \\You have real file tools: file_read, file_write, file_edit. Use them to
-        \\inspect and change actual files instead of describing what you would do.
+        \\You have real file tools: list_dir and grep to find files, file_read to
+        \\read them, file_write and file_edit to change them (the user approves
+        \\each change). Use them to inspect and change actual files instead of
+        \\describing what you would do.
         \\Tool paths are relative to the workspace root; requests outside it fail
         \\unless the configuration explicitly allows them. Keep replies short and
         \\concrete, and report what you actually did.

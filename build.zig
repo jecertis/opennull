@@ -75,6 +75,8 @@ pub fn build(b: *std.Build) void {
         "test/events_test.zig",
         "test/route_events_test.zig",
         "test/ngram_test.zig",
+        "test/list_dir_test.zig",
+        "test/grep_test.zig",
     };
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_mod_tests.step);

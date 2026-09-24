@@ -7,6 +7,8 @@ pub const enabled_tools = [_]tool.Tool{
     .{ .file_read = .{} },
     .{ .file_write = .{} },
     .{ .file_edit = .{} },
+    .{ .list_dir = .{} },
+    .{ .grep = .{} },
 };
 
 /// Builds one ToolSpec per enabled tool, for the provider's function-
