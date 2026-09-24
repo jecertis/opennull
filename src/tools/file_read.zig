@@ -41,7 +41,9 @@ pub const FileReadTool = struct {
             return .{ .success = false, .output = "", .err = "path is outside the allowed workspace" };
         }
 
-        const resolved = try policy.resolvePath(allocator, path);
+        // Re-checked through the filesystem so symlinks cannot escape.
+        const resolved = (try policy.resolveReal(allocator, io, path)) orelse
+            return .{ .success = false, .output = "", .err = "path is outside the allowed workspace" };
         defer allocator.free(resolved);
 
         const contents = std.Io.Dir.cwd().readFileAlloc(io, resolved, allocator, .unlimited) catch |err| {

@@ -46,7 +46,9 @@ pub const FileWriteTool = struct {
             return .{ .success = false, .output = "", .err = "path is outside the allowed workspace" };
         }
 
-        const resolved = try policy.resolvePath(allocator, path);
+        // Re-checked through the filesystem so symlinks cannot escape.
+        const resolved = (try policy.resolveReal(allocator, io, path)) orelse
+            return .{ .success = false, .output = "", .err = "path is outside the allowed workspace" };
         defer allocator.free(resolved);
 
         std.Io.Dir.cwd().writeFile(io, .{ .sub_path = resolved, .data = content }) catch |err| {
