@@ -38,7 +38,7 @@ opennull is an **agentic coding CLI** that treats your terminal like first class
 - 🎁 **Zero-config by default** — export one environment variable and you're running. Config file strictly optional.
 - 🛡️ **Sandboxed by design** — file tools operate inside your workspace unless you explicitly allow more.
 - 💸 **Knows what it costs** — every turn reports tokens straight from the wire, and dollars too once you give it a pricing table.
-- 🧪 **Test-first to its bones** — every module carries BDD-style specs; 22 offline test binaries, zero network required.
+- 🧪 **Test-first to its bones** — every module carries BDD-style specs; 27 offline test binaries, zero network required.
 
 ## Install — one line, thirty seconds
 
@@ -83,21 +83,21 @@ sculpt your own providers, routes, hints, pricing table, and sandbox allow-list.
 |---|---|
 | `opennull` | Opens the interactive chat REPL — the default experience. |
 | `opennull run "<prompt>"` | One glorious agent turn — tools fire live, text streams in, then a token/cost receipt prints and it exits like a professional. |
-| `opennull chat` | Same as bare `opennull` — the same machinery, multi-turn. History persists; blank lines ignored; `/fast` or `/powerful` redoes your last prompt on that route; `/exit`, `/quit`, or Ctrl-D when you're done. |
+| `opennull chat` | Same as bare `opennull` — the same machinery, multi-turn. History persists; blank lines ignored; `/fast` or `/powerful` re-sends your last prompt on that route (the earlier reply stays in the conversation); `/exit`, `/quit`, or Ctrl-D when you're done. |
 
 Both stream over SSE for every supported provider — and if a transport can't
 stream, they quietly fall back without making a scene.
 
 ## Footprint
 
-Deliberately, almost offensively tiny. The entire project is **~6,200 lines of
+Deliberately, almost offensively tiny. The entire project is **~9,100 lines of
 Zig** with **zero third-party dependencies** — `build.zig.zon` declares none,
 every import is stdlib-or-local, there is no C code, and the Linux builds are
 fully static.
 
 | What | Size |
 |---|---|
-| Binary | **1.0–1.3 MB** per platform |
+| Binary | **1.0–1.4 MB** per platform |
 | Release download | **~0.5 MB** tarball |
 | Entire source tree, tests included | **61 KB** compressed |
 
@@ -119,6 +119,7 @@ See [`examples/config.toml`](examples/config.toml) for the full annotated tour.
 | `[pricing.<model>]` | $/Mtok rates (+ per-request flat fees) powering those satisfying cost receipts |
 | `[sandbox]` | `allow` list of extra readable paths beyond the workspace |
 | `[harness]` | `fast_hint` / `powerful_hint` route selection; writes and edits always ask before running |
+| `[telemetry]` | Off by default. `local_events = true` logs routing and approval decisions to `.opennull/events.jsonl` on this machine only; `record_text` also stores the prompt/tool-call text |
 
 API keys resolve from the process environment first, `.env` second. Secrets
 never touch the repo.
@@ -129,7 +130,7 @@ Requires **Zig 0.16.0**.
 
 ```sh
 zig build            # binary at zig-out/bin/opennull
-zig build test       # 22 offline test binaries, 136 specs, zero network needed
+zig build test       # 27 offline test binaries, 198 specs, zero network needed
 zig build -Doptimize=ReleaseSafe -Dstrip=true   # the release-grade binary
 scripts/release.sh   # all four release tarballs + SHA256SUMS into dist/
 ```
@@ -146,7 +147,7 @@ src/
   provider/               neutral chat types, anthropic + openai_compat,
                           AnyProvider union, SSE decoder, real HTTP transport
   router/                 hint -> route selection -> provider construction
-  tools/                  Tool interface, file_read/file_write/file_edit, registry
+  tools/                  Tool interface, file_read/write/edit, list_dir, grep, registry
   agent/                  turn loop, session (multi-turn + usage totals)
   cli/                    bootstrap (startup seam), display helpers, run, chat
 test/                     one BDD spec file per module, wired in build.zig
