@@ -106,9 +106,13 @@ pub fn extractLatestTag(json: []const u8) ?[]const u8 {
 /// Extract "browser_download_url" for the asset matching `target` from the
 /// GitHub releases/latest JSON.
 pub fn extractAssetUrl(json: []const u8, target: []const u8) ?[]const u8 {
+    const needle = "\"browser_download_url\"";
     var remaining = json;
-    while (std.mem.indexOf(u8, remaining, "browser_download_url")) |pos| {
-        const after = remaining[pos..];
+    while (std.mem.indexOf(u8, remaining, needle)) |pos| {
+        // Skip the key itself and its colon, then read the quoted value.
+        const after_key = remaining[pos + needle.len ..];
+        const colon = std.mem.indexOfScalar(u8, after_key, ':') orelse return null;
+        const after = after_key[colon..];
         const q1 = std.mem.indexOfScalar(u8, after, '"') orelse return null;
         const val_start = q1 + 1;
         const q2 = std.mem.indexOfScalar(u8, after[val_start..], '"') orelse return null;
@@ -117,6 +121,38 @@ pub fn extractAssetUrl(json: []const u8, target: []const u8) ?[]const u8 {
         remaining = after[val_start + q2 ..];
     }
     return null;
+}
+
+/// Release asset listing the SHA-256 of every tarball.
+pub const sums_asset = "SHA256SUMS";
+
+/// Last path segment of a download URL.
+pub fn assetName(url: []const u8) []const u8 {
+    const slash = std.mem.lastIndexOfScalar(u8, url, '/') orelse return url;
+    return url[slash + 1 ..];
+}
+
+/// The hex digest for `name` in `sha256sum` output ("<hex>  <name>" or
+/// "<hex> *<name>" per line), or null when absent or malformed.
+pub fn expectedSha256(sums: []const u8, name: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, sums, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, " \r");
+        if (line.len < 66 or line[64] != ' ') continue;
+        const hash = line[0..64];
+        var file = std.mem.trimStart(u8, line[65..], " ");
+        if (file.len > 0 and file[0] == '*') file = file[1..];
+        if (!std.mem.eql(u8, file, name)) continue;
+        for (hash) |c| if (!std.ascii.isHex(c)) return null;
+        return hash;
+    }
+    return null;
+}
+
+fn sha256Hex(bytes: []const u8) [64]u8 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    return std.fmt.bytesToHex(digest, .lower);
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +171,6 @@ pub fn execute(
     allocator: std.mem.Allocator,
     io: std.Io,
     args: []const []const u8,
-    self_path: []const u8,
     stdout: *std.Io.Writer,
 ) !void {
     const parsed = parseArgs(args);
@@ -144,7 +179,7 @@ pub fn execute(
             try stdout.print("usage: opennull upgrade [--check]\n", .{});
             return;
         },
-        .upgrade => |u| return runUpgrade(allocator, io, u.check_only, self_path, stdout),
+        .upgrade => |u| return runUpgrade(allocator, io, u.check_only, stdout),
     }
 }
 
@@ -152,7 +187,6 @@ fn runUpgrade(
     allocator: std.mem.Allocator,
     io: std.Io,
     check_only: bool,
-    self_path: []const u8,
     stdout: *std.Io.Writer,
 ) !void {
     const current = Semver.parse(version) orelse {
@@ -184,17 +218,20 @@ fn runUpgrade(
         return;
     };
 
+    // The tag carries its own "v"; messages add one, so strip it here.
+    const latest_ver = std.mem.trimStart(u8, latest_tag, "v");
+
     if (!isNewer(latest, current)) {
         try stdout.print("==> already up to date (v{s})\n", .{version});
         return;
     }
 
     if (check_only) {
-        try stdout.print("==> update available: v{s} -> v{s}\n", .{ version, latest_tag });
+        try stdout.print("==> update available: v{s} -> v{s}\n", .{ version, latest_ver });
         return;
     }
 
-    try stdout.print("==> downloading v{s}...\n", .{latest_tag});
+    try stdout.print("==> downloading v{s}...\n", .{latest_ver});
 
     // 3. Download the tarball for this platform
     const asset_url = extractAssetUrl(json_body, platform.target) orelse {
@@ -202,34 +239,83 @@ fn runUpgrade(
         return;
     };
 
-    // Download tarball to a temp file
-    var tmp_buf: [64]u8 = undefined;
-    const tmp_path = std.fmt.bufPrint(&tmp_buf, "/tmp/opennull-update-{d}", .{std.c.getpid()}) catch return;
-    const tarball_path = try allocator.dupe(u8, tmp_path);
-    defer allocator.free(tarball_path);
+    // The running binary's real path: argv[0] is only a bare name when
+    // opennull was found through $PATH.
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe_len = std.process.executablePath(io, &exe_buf) catch |err| {
+        try stdout.print("error: cannot locate the running binary ({t})\n", .{err});
+        return;
+    };
+    const exe_path = exe_buf[0..exe_len];
+    const exe_dir = std.fs.path.dirname(exe_path) orelse {
+        try stdout.print("error: unexpected binary path {s}\n", .{exe_path});
+        return;
+    };
 
+    // Private work dir next to the binary: same filesystem, so the final
+    // rename is atomic, and not a guessable name in shared /tmp. createDir
+    // fails if anything already exists there, so nothing planted is reused.
+    // Suffix from the clock, not getpid(): std.c needs libc, which the
+    // static musl Linux builds don't link.
+    const stamp: u64 = @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(io, .real).toNanoseconds())));
+    const work_dir = try std.fmt.allocPrint(allocator, "{s}/.opennull-upgrade-{x}", .{ exe_dir, stamp });
+    defer allocator.free(work_dir);
+    std.Io.Dir.cwd().createDir(io, work_dir, .default_dir) catch |err| {
+        try stdout.print("error: cannot create {s} ({t})\n", .{ work_dir, err });
+        return;
+    };
+    defer std.Io.Dir.cwd().deleteTree(io, work_dir) catch {};
+
+    const asset_name = assetName(asset_url);
+    const tarball_path = try std.fs.path.join(allocator, &.{ work_dir, asset_name });
+    defer allocator.free(tarball_path);
     curlToFile(allocator, io, asset_url, tarball_path) catch |err| {
         try stdout.print("error: download failed ({t})\n", .{err});
         return;
     };
-    defer std.Io.Dir.cwd().deleteFile(io, tarball_path) catch {};
 
-    // 4. Extract tarball to a temp directory
-    var tmp_dir_buf: [80]u8 = undefined;
-    const tmp_dir_path = std.fmt.bufPrint(&tmp_dir_buf, "/tmp/opennull-extract-{d}", .{std.c.getpid()}) catch return;
-    const tmp_dir = try allocator.dupe(u8, tmp_dir_path);
-    defer allocator.free(tmp_dir);
-    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
+    // 4. Verify against the release's SHA256SUMS when it publishes one.
+    if (extractAssetUrl(json_body, sums_asset)) |sums_url| {
+        const sums = curlFetch(allocator, io, sums_url) catch |err| {
+            try stdout.print("error: could not fetch {s} ({t})\n", .{ sums_asset, err });
+            return;
+        };
+        defer allocator.free(sums);
+        const expected = expectedSha256(sums, asset_name) orelse {
+            try stdout.print("error: {s} has no entry for {s}\n", .{ sums_asset, asset_name });
+            return;
+        };
+        const tarball = try std.Io.Dir.cwd().readFileAlloc(io, tarball_path, allocator, .limited(64 * 1024 * 1024));
+        defer allocator.free(tarball);
+        const actual = sha256Hex(tarball);
+        if (!std.ascii.eqlIgnoreCase(expected, &actual)) {
+            try stdout.print("error: checksum mismatch for {s}; not installing\n", .{asset_name});
+            return;
+        }
+        try stdout.print("==> checksum verified\n", .{});
+    } else {
+        try stdout.print("warning: release has no {s}; download integrity not verified\n", .{sums_asset});
+    }
 
-    std.Io.Dir.cwd().createDir(io, tmp_dir, .default_dir) catch {};
-    _ = runCommand(allocator, io, &.{ "tar", "-xzf", tarball_path, "-C", tmp_dir }) catch |err| {
+    // 5. Extract into the work dir.
+    const extract_dir = try std.fs.path.join(allocator, &.{ work_dir, "x" });
+    defer allocator.free(extract_dir);
+    std.Io.Dir.cwd().createDir(io, extract_dir, .default_dir) catch |err| {
+        try stdout.print("error: could not create extract dir ({t})\n", .{err});
+        return;
+    };
+    const tar_code = runCommand(allocator, io, &.{ "tar", "-xzf", tarball_path, "-C", extract_dir }) catch |err| {
         try stdout.print("error: tar extraction failed ({t})\n", .{err});
         return;
     };
+    if (tar_code != 0) {
+        try stdout.print("error: tar extraction failed (exit {d})\n", .{tar_code});
+        return;
+    }
 
-    // 5. Find the extracted binary (name varies: opennull-vX.Y.Z-arch-os/opennull)
+    // 6. Find the extracted binary (name varies: opennull-vX.Y.Z-arch-os/opennull)
     var extracted_bin: ?[]const u8 = null;
-    var dir = std.Io.Dir.cwd().openDir(io, tmp_dir, .{}) catch |err| {
+    var dir = std.Io.Dir.cwd().openDir(io, extract_dir, .{}) catch |err| {
         try stdout.print("error: could not open temp dir ({t})\n", .{err});
         return;
     };
@@ -242,10 +328,8 @@ fn runUpgrade(
     defer walker.deinit();
 
     while (try walker.next(io)) |entry| {
-        if (std.mem.eql(u8, entry.basename, "opennull")) {
-            // Build the full path relative to cwd
-            const full = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmp_dir, entry.path });
-            extracted_bin = full;
+        if (entry.kind == .file and std.mem.eql(u8, entry.basename, "opennull")) {
+            extracted_bin = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ extract_dir, entry.path });
             break;
         }
     }
@@ -256,16 +340,22 @@ fn runUpgrade(
     };
     defer allocator.free(bin_path);
 
-    // 6. Replace self: write new binary, make executable
-    const new_content = try std.Io.Dir.cwd().readFileAlloc(io, bin_path, allocator, .limited(10 * 1024 * 1024));
+    // 7. Stage the new binary beside the old one, then rename over it: the
+    // old binary stays in place until the new one is complete.
+    const new_content = try std.Io.Dir.cwd().readFileAlloc(io, bin_path, allocator, .limited(64 * 1024 * 1024));
     defer allocator.free(new_content);
+    const staged = try std.fmt.allocPrint(allocator, "{s}/opennull.new", .{work_dir});
+    defer allocator.free(staged);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = staged, .data = new_content });
+    // 0o755, not .executable_file (0o777): a binary on $PATH must not be
+    // writable by other users.
+    try std.Io.Dir.cwd().setFilePermissions(io, staged, std.Io.File.Permissions.fromMode(0o755), .{});
+    std.Io.Dir.cwd().rename(staged, std.Io.Dir.cwd(), exe_path, io) catch |err| {
+        try stdout.print("error: could not replace {s} ({t}); old version left in place\n", .{ exe_path, err });
+        return;
+    };
 
-    // Remove old, write new
-    std.Io.Dir.cwd().deleteFile(io, self_path) catch {};
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = self_path, .data = new_content });
-    try std.Io.Dir.cwd().setFilePermissions(io, self_path, .executable_file, .{});
-
-    try stdout.print("==> upgraded v{s} -> v{s}\n", .{ version, latest_tag });
+    try stdout.print("==> upgraded v{s} -> v{s}\n", .{ version, latest_ver });
 }
 
 // ---------------------------------------------------------------------------
@@ -326,12 +416,12 @@ test "parseArgs no args" {
 }
 
 test "parseArgs --check" {
-    const r = parseArgs(&.{ "--check" });
+    const r = parseArgs(&.{"--check"});
     try std.testing.expect(r.upgrade.check_only);
 }
 
 test "parseArgs unknown" {
-    const r = parseArgs(&.{ "foo" });
+    const r = parseArgs(&.{"foo"});
     try std.testing.expectEqual(ParsedArgs.unknown, r);
 }
 
@@ -382,5 +472,33 @@ test "extractAssetUrl" {
         \\{"assets":[{"browser_download_url":"https://example.com/opennull-v0.2.0-x86_64-macos.tar.gz","name":"opennull-v0.2.0-x86_64-macos.tar.gz"}]}
     ;
     const url = extractAssetUrl(json, "x86_64-macos") orelse return error.TestUnexpectedNull;
-    try std.testing.expect(std.mem.indexOf(u8, url, "x86_64-macos") != null);
+    try std.testing.expectEqualStrings("https://example.com/opennull-v0.2.0-x86_64-macos.tar.gz", url);
+}
+
+test "extractAssetUrl picks the matching asset among several, spaced JSON too" {
+    const json =
+        \\{"assets": [
+        \\  {"name": "SHA256SUMS", "browser_download_url": "https://example.com/v0.2.0/SHA256SUMS"},
+        \\  {"name": "opennull-v0.2.0-aarch64-linux.tar.gz", "browser_download_url": "https://example.com/v0.2.0/opennull-v0.2.0-aarch64-linux.tar.gz"}
+        \\]}
+    ;
+    try std.testing.expectEqualStrings("https://example.com/v0.2.0/opennull-v0.2.0-aarch64-linux.tar.gz", extractAssetUrl(json, "aarch64-linux").?);
+    try std.testing.expectEqualStrings("https://example.com/v0.2.0/SHA256SUMS", extractAssetUrl(json, sums_asset).?);
+    try std.testing.expect(extractAssetUrl(json, "x86_64-macos") == null);
+}
+
+test "assetName takes the last URL segment" {
+    try std.testing.expectEqualStrings("opennull-v0.2.0-x86_64-macos.tar.gz", assetName("https://example.com/dl/v0.2.0/opennull-v0.2.0-x86_64-macos.tar.gz"));
+}
+
+test "expectedSha256 finds the named file in sha256sum output" {
+    const h1 = "a" ** 64;
+    const h2 = "B" ** 64;
+    const sums = h1 ++ "  opennull-v0.2.0-x86_64-linux.tar.gz\n" ++ h2 ++ " *opennull-v0.2.0-x86_64-macos.tar.gz\r\n";
+    try std.testing.expectEqualStrings(h1, expectedSha256(sums, "opennull-v0.2.0-x86_64-linux.tar.gz").?);
+    try std.testing.expectEqualStrings(h2, expectedSha256(sums, "opennull-v0.2.0-x86_64-macos.tar.gz").?);
+    try std.testing.expect(expectedSha256(sums, "opennull-v0.2.0-aarch64-linux.tar.gz") == null);
+    // A prefix of a listed name must not match.
+    try std.testing.expect(expectedSha256(sums, "opennull-v0.2.0-x86_64-linux.tar") == null);
+    try std.testing.expect(expectedSha256(("z" ** 64) ++ "  f.tar.gz\n", "f.tar.gz") == null);
 }

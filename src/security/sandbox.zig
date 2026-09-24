@@ -36,7 +36,69 @@ pub const SecurityPolicy = struct {
     pub fn resolvePath(self: SecurityPolicy, allocator: std.mem.Allocator, requested_path: []const u8) ![]u8 {
         return resolveAgainst(allocator, self.workspace_root, requested_path);
     }
+
+    /// Symlink-aware check for a path that already passed `isAllowed`:
+    /// resolves it through the filesystem and re-applies the same rules to
+    /// the real path, so a symlink inside the workspace cannot reach
+    /// outside it. For a path that does not exist yet (a new file), the
+    /// deepest existing ancestor is resolved and the rest appended; a
+    /// dangling symlink anywhere in that missing tail is denied, since
+    /// writing through it would create its target. Returns the real path
+    /// to open, or null when it escapes. Caller frees.
+    pub fn resolveReal(
+        self: SecurityPolicy,
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        requested_path: []const u8,
+    ) !?[]u8 {
+        const lexical = try resolveAgainst(allocator, self.workspace_root, requested_path);
+        defer allocator.free(lexical);
+        const real = (try realOrDeepestAncestor(allocator, io, lexical)) orelse return null;
+        errdefer allocator.free(real);
+
+        const root = try realOrLexical(allocator, io, self.workspace_root);
+        defer allocator.free(root);
+        if (isWithin(root, real)) return real;
+        for (self.allow) |allow_entry| {
+            const lexical_allow = try resolveAgainst(allocator, self.workspace_root, allow_entry);
+            defer allocator.free(lexical_allow);
+            const real_allow = try realOrLexical(allocator, io, lexical_allow);
+            defer allocator.free(real_allow);
+            if (isWithin(real_allow, real)) return real;
+        }
+        allocator.free(real);
+        return null;
+    }
 };
+
+/// The real path of absolute `path`, or `path` itself when it does not exist
+/// (an allow-list entry or test root that isn't on disk).
+fn realOrLexical(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = std.Io.Dir.realPathFileAbsolute(io, path, &buf) catch return allocator.dupe(u8, path);
+    return allocator.dupe(u8, buf[0..n]);
+}
+
+/// Resolves absolute `path` through the filesystem. Missing trailing
+/// components are re-appended to the deepest existing ancestor's real
+/// path. Returns null when a missing component is a dangling symlink.
+fn realOrDeepestAncestor(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !?[]u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var link_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var existing: []const u8 = path;
+    while (true) {
+        if (std.Io.Dir.realPathFileAbsolute(io, existing, &buf)) |n| {
+            const tail = path[existing.len..];
+            return try std.mem.concat(allocator, u8, &.{ buf[0..n], tail });
+        } else |err| switch (err) {
+            error.FileNotFound, error.NotDir => {},
+            else => return err,
+        }
+        // A missing component that is itself a symlink points nowhere yet.
+        if (std.Io.Dir.cwd().readLink(io, existing, &link_buf)) |_| return null else |_| {}
+        existing = std.fs.path.dirname(existing) orelse return null;
+    }
+}
 
 /// Lexically resolve `path` to an absolute path: if already absolute it is
 /// just normalized (".." / "." segments collapsed); if relative it is joined

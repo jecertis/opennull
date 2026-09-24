@@ -3,11 +3,8 @@
 //! a path. A bug here is a sandbox escape, so every scenario is written and
 //! run red before any implementation exists.
 //!
-//! Deferred scenario (not covered yet, tracked for a follow-up TDD cycle):
-//! a symlink *inside* the workspace that points *outside* it. That requires
-//! real filesystem resolution (std.fs.realpath) against on-disk fixtures,
-//! not the lexical path-only checks below, and is intentionally out of scope
-//! for this first cycle.
+//! Lexical scenarios come first; the symlink scenarios at the end run
+//! `resolveReal` against real temporary directories.
 
 const std = @import("std");
 const opennull = @import("opennull");
@@ -147,4 +144,137 @@ test "sibling prefix of an allow entry does not match" {
     };
     const denied = try policy.isAllowed(std.testing.allocator, "/work/shared-evil/x.txt");
     try std.testing.expect(!denied);
+}
+
+// -- symlinks (real filesystem) -------------------------------------------
+
+const io = std.testing.io;
+
+fn realRoot(dir: std.Io.Dir, buf: []u8) []const u8 {
+    const n = dir.realPath(io, buf) catch @panic("realPath failed in test setup");
+    return buf[0..n];
+}
+
+/// A workspace dir and a separate "outside" dir holding secret.txt.
+const Fixture = struct {
+    ws: std.testing.TmpDir,
+    outside: std.testing.TmpDir,
+    ws_buf: [std.fs.max_path_bytes]u8 = undefined,
+    out_buf: [std.fs.max_path_bytes]u8 = undefined,
+    ws_root: []const u8 = "",
+    out_root: []const u8 = "",
+
+    fn init(self: *Fixture) !void {
+        self.ws = std.testing.tmpDir(.{});
+        self.outside = std.testing.tmpDir(.{});
+        self.ws_root = realRoot(self.ws.dir, &self.ws_buf);
+        self.out_root = realRoot(self.outside.dir, &self.out_buf);
+        try self.outside.dir.writeFile(io, .{ .sub_path = "secret.txt", .data = "secret" });
+        try self.ws.dir.writeFile(io, .{ .sub_path = "inside.txt", .data = "ok" });
+    }
+    fn deinit(self: *Fixture) void {
+        self.ws.cleanup();
+        self.outside.cleanup();
+    }
+    fn outsidePath(self: *Fixture, name: []const u8) ![]u8 {
+        return std.fs.path.join(std.testing.allocator, &.{ self.out_root, name });
+    }
+    fn policy(self: *Fixture) SecurityPolicy {
+        return .{ .workspace_root = self.ws_root };
+    }
+};
+
+fn expectDenied(p: SecurityPolicy, path: []const u8) !void {
+    // Lexically every one of these looks inside the workspace...
+    try std.testing.expect(try p.isAllowed(std.testing.allocator, path));
+    // ...but the real path escapes.
+    try std.testing.expect((try p.resolveReal(std.testing.allocator, io, path)) == null);
+}
+
+// Scenario: Given a symlink inside the workspace pointing at a file
+// outside it, when resolved for real, then it is denied.
+test "symlink to an outside file is denied" {
+    var f: Fixture = .{ .ws = undefined, .outside = undefined };
+    try f.init();
+    defer f.deinit();
+    const target = try f.outsidePath("secret.txt");
+    defer std.testing.allocator.free(target);
+    try f.ws.dir.symLink(io, target, "link.txt", .{});
+    try expectDenied(f.policy(), "link.txt");
+}
+
+// Scenario: Given a symlinked directory leading outside, when a file below
+// it is resolved (existing for a read, or new for a write), then both are
+// denied.
+test "symlinked directory to outside is denied for reads and new files" {
+    var f: Fixture = .{ .ws = undefined, .outside = undefined };
+    try f.init();
+    defer f.deinit();
+    try f.ws.dir.symLink(io, f.out_root, "out", .{ .is_directory = true });
+    try expectDenied(f.policy(), "out/secret.txt");
+    try expectDenied(f.policy(), "out/new.txt");
+    try expectDenied(f.policy(), "out/newdir/new.txt");
+}
+
+// Scenario: Given a dangling symlink whose target would be created outside,
+// when resolved for a write, then it is denied (writing would follow it).
+test "dangling symlink to outside is denied" {
+    var f: Fixture = .{ .ws = undefined, .outside = undefined };
+    try f.init();
+    defer f.deinit();
+    const target = try f.outsidePath("created-by-agent.txt");
+    defer std.testing.allocator.free(target);
+    try f.ws.dir.symLink(io, target, "dangling.txt", .{});
+    try expectDenied(f.policy(), "dangling.txt");
+}
+
+// Scenario: Given ordinary files, new files, and a symlink that stays inside
+// the workspace, when resolved for real, then each is allowed and the real
+// path lies under the workspace root.
+test "real paths inside the workspace stay allowed" {
+    var f: Fixture = .{ .ws = undefined, .outside = undefined };
+    try f.init();
+    defer f.deinit();
+    try f.ws.dir.symLink(io, "inside.txt", "alias.txt", .{});
+    const p = f.policy();
+    for ([_][]const u8{ "inside.txt", "new.txt", "sub/dir/new.txt", "alias.txt" }) |path| {
+        const real = (try p.resolveReal(std.testing.allocator, io, path)) orelse return error.UnexpectedDenial;
+        defer std.testing.allocator.free(real);
+        try std.testing.expect(std.mem.startsWith(u8, real, f.ws_root));
+    }
+}
+
+// Scenario: Given an allow-list entry, when a real path lies under it, then
+// it is allowed even though it is outside the workspace.
+test "real path under an allow-list entry is allowed" {
+    var f: Fixture = .{ .ws = undefined, .outside = undefined };
+    try f.init();
+    defer f.deinit();
+    const allow = [_][]const u8{f.out_root};
+    const p = SecurityPolicy{ .workspace_root = f.ws_root, .allow = &allow };
+    const target = try f.outsidePath("secret.txt");
+    defer std.testing.allocator.free(target);
+    const real = (try p.resolveReal(std.testing.allocator, io, target)) orelse return error.UnexpectedDenial;
+    defer std.testing.allocator.free(real);
+    try std.testing.expectEqualStrings(target, real);
+}
+
+// Scenario: Given the file_read tool and a symlink to an outside file, when
+// the model asks to read the link, then the tool refuses and returns no
+// contents.
+test "file_read refuses to follow a symlink out of the workspace" {
+    var f: Fixture = .{ .ws = undefined, .outside = undefined };
+    try f.init();
+    defer f.deinit();
+    const target = try f.outsidePath("secret.txt");
+    defer std.testing.allocator.free(target);
+    try f.ws.dir.symLink(io, target, "link.txt", .{});
+
+    const args = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, "{\"path\":\"link.txt\"}", .{});
+    defer args.deinit();
+    const p = f.policy();
+    const t = opennull.tools.tool.Tool{ .file_read = .{} };
+    const result = try t.execute(std.testing.allocator, io, &p, args.value);
+    try std.testing.expect(!result.success);
+    try std.testing.expectEqualStrings("path is outside the allowed workspace", result.err.?);
 }
