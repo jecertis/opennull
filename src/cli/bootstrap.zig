@@ -38,8 +38,15 @@ pub const Bootstrapped = struct {
     /// Heap-anchored transport used to build each prompt's provider.
     _http_transport: *http.HttpTransport,
     _allocator: std.mem.Allocator,
+    /// Loaded `[harness] router_model`, if set and valid.
+    router_model: ?router.RouterModel = null,
+    _router_model_bytes: ?[]u8 = null,
+    /// Why a configured router_model is not in use (the keyword router is).
+    router_model_error: ?anyerror = null,
 
     pub fn deinit(self: *Bootstrapped) void {
+        if (self.router_model) |*m| m.deinit(self._allocator);
+        if (self._router_model_bytes) |b| self._allocator.free(b);
         self.config.deinit();
         self._allocator.free(self.workspace_root);
         self._allocator.free(self.system_prompt);
@@ -120,13 +127,50 @@ pub fn bootstrap(
     const t = try allocator.create(http.HttpTransport);
     t.* = .{ .allocator = allocator, .io = io };
 
-    return .{
+    var boot: Bootstrapped = .{
         .config = cfg,
         .workspace_root = workspace_root,
         .system_prompt = system_prompt,
         ._http_transport = t,
         ._allocator = allocator,
     };
+    if (cfg.harness.router_model) |path| loadRouterModel(&boot, io, path);
+    return boot;
+}
+
+/// Largest router model we will read.
+const max_router_model_bytes: usize = 16 << 20;
+
+/// Soft by design: any failure leaves the keyword router in charge and
+/// records why, for the command to show.
+fn loadRouterModel(boot: *Bootstrapped, io: std.Io, path: []const u8) void {
+    const a = boot._allocator;
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(max_router_model_bytes)) catch |err| {
+        boot.router_model_error = err;
+        return;
+    };
+    const model = router.RouterModel.init(a, bytes) catch |err| {
+        a.free(bytes);
+        boot.router_model_error = err;
+        return;
+    };
+    boot._router_model_bytes = bytes;
+    boot.router_model = model;
+}
+
+/// The routing decision for one prompt, from the loaded model or the
+/// keyword rules.
+pub fn classify(self: *const Bootstrapped, prompt: []const u8) router.Classified {
+    const model: ?*const router.RouterModel = if (self.router_model) |*m| m else null;
+    return router.classify(model, self._allocator, prompt);
+}
+
+/// One line for the user about which router is active, or null for the
+/// plain keyword default. Caller frees.
+pub fn routerStatus(self: *const Bootstrapped, allocator: std.mem.Allocator) !?[]u8 {
+    const path = self.config.harness.router_model orelse return null;
+    if (self.router_model) |*m| return try std.fmt.allocPrint(allocator, "router> {s} ({s})", .{ m.model.engine(), path });
+    return try std.fmt.allocPrint(allocator, "warning: router_model {s} not used ({t}); using the keyword router", .{ path, self.router_model_error.? });
 }
 
 pub fn routeForPrompt(self: *const Bootstrapped, prompt: []const u8) router.Selected {

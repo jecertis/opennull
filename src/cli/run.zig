@@ -74,9 +74,13 @@ pub fn execute(
         try session_approver.enableEventLog(allocator, io, boot.workspace_root, boot.config.telemetry.record_text);
     }
     var recorder = route_events.RouteRecorder{ .log = session_approver.eventLog() };
-    const hint = router.classifyPrompt(prompt);
-    const selected = bootstrap.routeForHint(&boot, hint);
-    recorder.decided(prompt, hint, selected.model);
+    if (try bootstrap.routerStatus(&boot, allocator)) |status| {
+        defer allocator.free(status);
+        try stdout.print("{s}\n", .{status});
+    }
+    const choice = bootstrap.classify(&boot, prompt);
+    const selected = bootstrap.routeForHint(&boot, choice.hint);
+    recorder.decided(prompt, choice, selected.model);
     const prov = try bootstrap.providerFor(&boot, selected);
     try stdout.print("route> {s}\n", .{selected.model});
 
@@ -104,7 +108,7 @@ pub fn execute(
     } else {
         try stdout.print("{s}\n", .{reply});
     }
-    recorder.turnFinished(hint, session_approver.console.approved_count);
+    recorder.turnFinished(choice.hint, session_approver.console.approved_count);
 
     const line = try display.formatTokensLine(
         allocator,

@@ -78,6 +78,10 @@ pub fn execute(
         try session_approver.enableEventLog(allocator, io, boot.workspace_root, boot.config.telemetry.record_text);
     }
     var recorder = route_events.RouteRecorder{ .log = session_approver.eventLog() };
+    if (try bootstrap.routerStatus(&boot, allocator)) |status| {
+        defer allocator.free(status);
+        try stdout.print("{s}\n", .{status});
+    }
     // Copied out of the stdin buffer so /fast and /powerful can resend it.
     var last_prompt: ?[]const u8 = null;
 
@@ -94,15 +98,15 @@ pub fn execute(
             else => return err,
         } orelse break;
 
-        // `hint` is the route the turn runs on; `engine_routed` is false when
+        // `choice.hint` is the route the turn runs on; `engine_routed` is false when
         // the user forced it, which is not a decision to record.
-        const text: []const u8, const hint: router.PromptHint, const engine_routed = switch (parseLine(raw_line)) {
+        const text: []const u8, const choice: router.Classified, const engine_routed = switch (parseLine(raw_line)) {
             .skip => continue,
             .exit => break,
             .prompt => |t| blk: {
                 const owned = try arena.allocator().dupe(u8, t);
                 last_prompt = owned;
-                break :blk .{ owned, router.classifyPrompt(owned), true };
+                break :blk .{ owned, bootstrap.classify(&boot, owned), true };
             },
             .override => |h| blk: {
                 const prev = last_prompt orelse {
@@ -110,15 +114,15 @@ pub fn execute(
                     continue;
                 };
                 recorder.overridden(h);
-                break :blk .{ prev, h, false };
+                break :blk .{ prev, router.Classified{ .hint = h, .engine = "user", .confidence = null }, false };
             },
         };
         const in_before = totals.input_tokens;
         const out_before = totals.output_tokens;
         const approved_before = session_approver.console.approved_count;
         var live = display.LiveTextPrinter{ .w = stdout, .prefix = "assistant> " };
-        const selected = bootstrap.routeForHint(&boot, hint);
-        if (engine_routed) recorder.decided(text, hint, selected.model);
+        const selected = bootstrap.routeForHint(&boot, choice.hint);
+        if (engine_routed) recorder.decided(text, choice, selected.model);
         const prov = bootstrap.providerFor(&boot, selected) catch |err| {
             try stdout.print("error: route unavailable: {t}\n", .{err});
             continue;
@@ -152,7 +156,7 @@ pub fn execute(
         } else {
             try stdout.print("assistant> {s}\n", .{reply});
         }
-        if (engine_routed) recorder.turnFinished(hint, session_approver.console.approved_count - approved_before);
+        if (engine_routed) recorder.turnFinished(choice.hint, session_approver.console.approved_count - approved_before);
         const line = try display.formatTokensLine(
             allocator,
             totals.input_tokens - in_before,

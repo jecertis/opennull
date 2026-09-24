@@ -4,6 +4,11 @@ const std = @import("std");
 const opennull = @import("opennull");
 const events = opennull.telemetry.events;
 const RouteRecorder = opennull.cli.route_events.RouteRecorder;
+const router = opennull.router;
+
+fn kw(hint: router.PromptHint) router.Classified {
+    return .{ .hint = hint, .engine = router.keyword_engine, .confidence = null };
+}
 
 const MemorySink = struct {
     buf: std.ArrayListUnmanaged(u8) = .empty,
@@ -48,7 +53,7 @@ fn str(v: std.json.Value, key: []const u8) []const u8 {
 // happens and nothing crashes.
 test "recorder without a log is a no-op" {
     var r = RouteRecorder{ .log = null };
-    r.decided("hi", .fast, "m");
+    r.decided("hi", kw(.fast), "m");
     r.overridden(.powerful);
     r.turnFinished(.fast, 3);
 }
@@ -60,7 +65,7 @@ test "routed prompt logs a router decision" {
     f.init();
     defer f.deinit();
     var r = RouteRecorder{ .log = &f.log };
-    r.decided("show me main.zig", .fast, "llama3.2:1b");
+    r.decided("show me main.zig", kw(.fast), "llama3.2:1b");
 
     try std.testing.expectEqual(@as(usize, 1), f.lineCount());
     const d = try f.line(0);
@@ -79,8 +84,8 @@ test "override attaches explicit model_switch to the latest decision" {
     f.init();
     defer f.deinit();
     var r = RouteRecorder{ .log = &f.log };
-    r.decided("first", .fast, "m");
-    r.decided("second", .fast, "m");
+    r.decided("first", kw(.fast), "m");
+    r.decided("second", kw(.fast), "m");
     r.overridden(.powerful);
 
     const second = try f.line(1);
@@ -111,7 +116,7 @@ test "approved edit on a fast turn logs an implicit fast outcome" {
     f.init();
     defer f.deinit();
     var r = RouteRecorder{ .log = &f.log };
-    r.decided("rename x", .fast, "m");
+    r.decided("rename x", kw(.fast), "m");
     r.turnFinished(.fast, 1);
 
     const o = try f.line(1);
@@ -128,9 +133,9 @@ test "no implicit outcome without an approved edit on a fast turn" {
     f.init();
     defer f.deinit();
     var r = RouteRecorder{ .log = &f.log };
-    r.decided("design the cache", .powerful, "m");
+    r.decided("design the cache", kw(.powerful), "m");
     r.turnFinished(.powerful, 2);
-    r.decided("show x", .fast, "m");
+    r.decided("show x", kw(.fast), "m");
     r.turnFinished(.fast, 0);
     try std.testing.expectEqual(@as(usize, 2), f.lineCount());
 }

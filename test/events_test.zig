@@ -80,6 +80,17 @@ test "decision line carries the v1 fields" {
     try std.testing.expect(o.get("confidence") == null);
 }
 
+// Scenario: Given an engine with a probability, when its decision is
+// formatted, then confidence is written.
+test "decision line carries confidence when the engine has one" {
+    const labels = [_][]const u8{ "fast", "powerful" };
+    const line = try events.formatDecision(std.testing.allocator, .{ .id = "d2", .ts_seconds = 0, .point = "router", .labels = &labels, .label = "powerful", .confidence = 0.75, .engine = "linearone-ngram@afae315d", .hashed_text = "x" });
+    defer std.testing.allocator.free(line);
+    const parsed = try parseLine(line, 0);
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(f64, 0.75), parsed.value.object.get("confidence").?.float);
+}
+
 // Scenario: Given text recording is off, when a decision is logged, then
 // the text is dropped but its hash is still written.
 test "record_text off keeps the hash, drops the text" {

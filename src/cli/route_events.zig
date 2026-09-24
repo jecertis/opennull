@@ -7,7 +7,6 @@
 const std = @import("std");
 const events = @import("../telemetry/events.zig");
 const router = @import("../router/router.zig");
-const version = @import("../root.zig").version;
 
 pub const RouteRecorder = struct {
     /// Null when event logging is off: every method is then a no-op.
@@ -17,10 +16,9 @@ pub const RouteRecorder = struct {
     id_len: usize = 0,
 
     pub const labels = [_][]const u8{ "fast", "powerful" };
-    pub const engine = "opennull-keyword@" ++ version;
 
     /// Records the engine's choice for `prompt`.
-    pub fn decided(self: *RouteRecorder, prompt: []const u8, hint: router.PromptHint, model: []const u8) void {
+    pub fn decided(self: *RouteRecorder, prompt: []const u8, choice: router.Classified, model: []const u8) void {
         const log = self.log orelse return;
         const id = log.nextId(&self.id_buf);
         self.id_len = id.len;
@@ -29,8 +27,9 @@ pub const RouteRecorder = struct {
             .ts_seconds = log.nowSeconds(),
             .point = "router",
             .labels = &labels,
-            .label = @tagName(hint),
-            .engine = engine,
+            .label = @tagName(choice.hint),
+            .confidence = choice.confidence,
+            .engine = choice.engine,
             .model = model,
             .text = prompt,
             .hashed_text = prompt,

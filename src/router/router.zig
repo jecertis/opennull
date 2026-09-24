@@ -9,6 +9,8 @@ const config_mod = @import("../config/config.zig");
 const provider = @import("../provider/provider.zig");
 const any = @import("../provider/any.zig");
 const policy = @import("policy.zig");
+const ngram = @import("ngram.zig");
+const version = @import("../root.zig").version;
 
 pub const Config = config_mod.Config;
 
@@ -51,6 +53,59 @@ pub fn selectForHint(cfg: *const Config, hint: policy.Hint) Selected {
 
 pub const classifyPrompt = policy.classifyPrompt;
 pub const PromptHint = policy.Hint;
+
+pub const keyword_engine = "opennull-keyword@" ++ version;
+
+/// A validated LinearOne n-gram model whose labels are exactly fast and
+/// powerful (in either order).
+pub const RouterModel = struct {
+    model: ngram.Model,
+    /// Which of the model's two labels means `fast`.
+    fast_index: u1,
+
+    pub const LoadError = ngram.ParseError || error{UnexpectedLabels};
+
+    /// `bytes` must outlive the returned value.
+    pub fn init(allocator: std.mem.Allocator, bytes: []const u8) LoadError!RouterModel {
+        var model = try ngram.parse(allocator, bytes);
+        errdefer model.deinit(allocator);
+        const l = model.labels;
+        const fast_index: u1 = if (std.mem.eql(u8, l[0], "fast") and std.mem.eql(u8, l[1], "powerful"))
+            0
+        else if (std.mem.eql(u8, l[1], "fast") and std.mem.eql(u8, l[0], "powerful"))
+            1
+        else
+            return error.UnexpectedLabels;
+        return .{ .model = model, .fast_index = fast_index };
+    }
+
+    pub fn deinit(self: *RouterModel, allocator: std.mem.Allocator) void {
+        self.model.deinit(allocator);
+    }
+};
+
+/// A routing decision plus what made it, for the event log.
+pub const Classified = struct {
+    hint: PromptHint,
+    engine: []const u8,
+    /// Probability of `hint`; null for the keyword rules.
+    confidence: ?f64,
+};
+
+/// Routes with the model when one is loaded, else the keyword rules. A
+/// scoring failure (out of memory) also falls back rather than failing.
+pub fn classify(model: ?*const RouterModel, allocator: std.mem.Allocator, prompt: []const u8) Classified {
+    if (model) |m| {
+        if (ngram.score(&m.model, allocator, prompt)) |s| {
+            return .{
+                .hint = if (s.label == m.fast_index) .fast else .powerful,
+                .engine = m.model.engine(),
+                .confidence = s.confidence(),
+            };
+        } else |_| {}
+    }
+    return .{ .hint = policy.classifyPrompt(prompt), .engine = keyword_engine, .confidence = null };
+}
 
 pub const BuildError = error{ UnknownProviderKind, UnknownProvider };
 

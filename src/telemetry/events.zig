@@ -10,6 +10,8 @@ pub const DecisionRecord = struct {
     point: []const u8,
     labels: []const []const u8,
     label: []const u8,
+    /// Probability of `label`, when the engine has one.
+    confidence: ?f64 = null,
     engine: []const u8,
     /// Downstream model the decision resolved to, when there is one.
     model: ?[]const u8 = null,
@@ -61,6 +63,7 @@ pub fn formatDecision(allocator: std.mem.Allocator, d: DecisionRecord) ![]u8 {
         .point = d.point,
         .labels = d.labels,
         .label = d.label,
+        .confidence = d.confidence,
         .engine = d.engine,
         .model = d.model,
         .text = d.text,

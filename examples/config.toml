@@ -35,6 +35,10 @@ tool_calling = true
 [harness]
 fast_hint = "local"
 powerful_hint = "default"
+# Optional LinearOne n-gram model (.l1ng) that replaces the keyword rules.
+# Not yet confirmed on opennull prompts, so leave it unset for now. If the
+# file is missing or invalid, opennull warns and uses the keyword router.
+# router_model = "router.l1ng"
 
 [sandbox]
 allow = []

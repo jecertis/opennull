@@ -33,6 +33,9 @@ pub const PriceEntry = struct {
 pub const HarnessConfig = struct {
     fast_hint: ?[]const u8 = null,
     powerful_hint: ?[]const u8 = null,
+    /// Optional LinearOne n-gram model (.l1ng) that replaces the keyword
+    /// rules. Unset, unreadable or invalid means the keyword router.
+    router_model: ?[]const u8 = null,
 };
 
 /// Local decision/outcome log (LinearOne event format v1). Off unless the
@@ -125,9 +128,11 @@ fn loadHarness(a: std.mem.Allocator, root: *toml.Table) !HarnessConfig {
     const t = toml.getTable(root, "harness") orelse return .{};
     const fast = toml.getString(t, "fast_hint");
     const powerful = toml.getString(t, "powerful_hint");
+    const model = toml.getString(t, "router_model");
     return .{
         .fast_hint = if (fast) |v| try a.dupe(u8, v) else null,
         .powerful_hint = if (powerful) |v| try a.dupe(u8, v) else null,
+        .router_model = if (model) |v| try a.dupe(u8, v) else null,
     };
 }
 

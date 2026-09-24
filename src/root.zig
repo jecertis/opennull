@@ -17,6 +17,7 @@ pub const provider = struct {
     pub const sse = @import("provider/sse.zig");
 };
 pub const router = @import("router/router.zig");
+pub const router_ngram = @import("router/ngram.zig");
 pub const cli = struct {
     pub const run = @import("cli/run.zig");
     pub const chat = @import("cli/chat.zig");

@@ -142,6 +142,7 @@ test "parses optional harness routing hints" {
         \\[harness]
         \\fast_hint = "default"
         \\powerful_hint = "powerful"
+        \\router_model = "models/router.l1ng"
     ;
     var dmap = try dotenv.parse(std.testing.allocator, "ANTHROPIC_API_KEY=x\n");
     defer dmap.deinit(std.testing.allocator);
@@ -152,6 +153,7 @@ test "parses optional harness routing hints" {
     defer cfg.deinit();
     try std.testing.expectEqualStrings("default", cfg.harness.fast_hint.?);
     try std.testing.expectEqualStrings("powerful", cfg.harness.powerful_hint.?);
+    try std.testing.expectEqualStrings("models/router.l1ng", cfg.harness.router_model.?);
 }
 
 // Scenario: Given a route that references a provider name not present in
