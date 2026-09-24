@@ -20,12 +20,24 @@ pub fn classifyPrompt(prompt: []const u8) Hint {
     for (prompt[0..len], 0..) |c, i| lowered[i] = std.ascii.toLower(c);
     const text = lowered[0..len];
     for (powerful_words) |word| {
-        if (std.mem.indexOf(u8, text, word) != null) return .powerful;
+        if (startsWord(text, word)) return .powerful;
     }
-    if (std.mem.indexOf(u8, text, "read") != null or
-        std.mem.indexOf(u8, text, "show") != null or
-        std.mem.indexOf(u8, text, "list") != null or
-        std.mem.indexOf(u8, text, "find") != null or
-        std.mem.indexOf(u8, text, "explain") != null) return .fast;
+    for (fast_words) |word| {
+        if (startsWord(text, word)) return .fast;
+    }
     return .powerful;
+}
+
+const fast_words = [_][]const u8{ "read", "show", "list", "find", "explain" };
+
+/// True when `stem` occurs at the start of a word in `text`, so "test"
+/// matches "tests" and "testing" but not "latest", and "fix" does not match
+/// "prefix". Stems like "investigat" still cover their inflections.
+fn startsWord(text: []const u8, stem: []const u8) bool {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, text, from, stem)) |at| {
+        if (at == 0 or !std.ascii.isAlphanumeric(text[at - 1])) return true;
+        from = at + 1;
+    }
+    return false;
 }

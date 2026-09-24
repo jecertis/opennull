@@ -126,6 +126,18 @@ test "prompt policy chooses fast for direct reads and powerful for changes" {
     try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("what should we do?"));
 }
 
+// Scenario: Given keywords embedded inside other words, when classified,
+// then they no longer trigger ("latest" is not "test", "prefix" is not
+// "fix"), while real word starts and stems still do.
+test "prompt policy matches keywords only at word starts" {
+    try std.testing.expectEqual(router.PromptHint.fast, router.classifyPrompt("show me the latest version"));
+    try std.testing.expectEqual(router.PromptHint.fast, router.classifyPrompt("list files with the prefix foo"));
+    try std.testing.expectEqual(router.PromptHint.fast, router.classifyPrompt("find the credit card module"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("run the tests"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("Investigating a crash; show logs"));
+    try std.testing.expectEqual(router.PromptHint.powerful, router.classifyPrompt("(fix) the parser"));
+}
+
 test "prompt routing uses configured hints and falls back to default" {
     var cfg = fixtureConfig();
     cfg.harness = .{ .fast_hint = "cheap", .powerful_hint = "missing" };
